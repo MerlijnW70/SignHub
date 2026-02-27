@@ -11,6 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
-  targetCompanyId: __t.u64(),
-  message: __t.string(),
+  connectionId: __t.u64(),
+  text: __t.string(),
 };

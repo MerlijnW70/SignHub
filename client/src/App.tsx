@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
-import { useTable } from 'spacetimedb/react'
-import { tables } from './module_bindings'
+import { useTable, useReducer } from 'spacetimedb/react'
+import { tables, reducers } from './module_bindings'
 import { useIdentity, toHex } from './hooks/useIdentity'
+import { useFormAction } from './hooks/useFormAction'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { SignUpForm } from './components/SignUpForm'
 import { CreateCompanyForm } from './components/CreateCompanyForm'
@@ -51,12 +52,53 @@ function AuthenticatedApp() {
     setCompanyTimeout(false)
   }, [myAccount?.companyId, myCompany])
 
+  // Demo user setup
+  const createAccount = useReducer(reducers.createAccount)
+  const createCompany = useReducer(reducers.createCompany)
+  const { error: demoError, loading: demoLoading, run: demoRun } = useFormAction()
+
+  const handleDemo = (variant: 'A' | 'B') => {
+    const isA = variant === 'A'
+    demoRun(async () => {
+      await createAccount({
+        fullName: isA ? 'Alice van Dijk' : 'Bob Jansen',
+        nickname: isA ? 'Alice' : 'Bob',
+        email: isA ? 'alice@alphasigns.test' : 'bob@betasigns.test',
+      })
+      await createCompany({
+        name: isA ? 'Alpha Signs' : 'Beta Signs',
+        slug: isA ? 'alpha-signs' : 'beta-signs',
+        location: isA ? 'Amsterdam, NL' : 'Rotterdam, NL',
+      })
+    }, 'Demo account created')
+  }
+
   // No account → sign up
   if (!myAccount) {
     return (
       <div className="app center">
         <ConnectionStatus />
         <SignUpForm />
+        <div className="demo-buttons">
+          <p className="demo-label">Quick test setup</p>
+          <div className="demo-row">
+            <button
+              className="btn-choice"
+              onClick={() => handleDemo('A')}
+              disabled={demoLoading}
+            >
+              {demoLoading ? 'Setting up...' : 'Demo User A — Alpha Signs'}
+            </button>
+            <button
+              className="btn-choice"
+              onClick={() => handleDemo('B')}
+              disabled={demoLoading}
+            >
+              {demoLoading ? 'Setting up...' : 'Demo User B — Beta Signs'}
+            </button>
+          </div>
+          {demoError && <p className="error">{demoError}</p>}
+        </div>
       </div>
     )
   }

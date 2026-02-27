@@ -18,6 +18,7 @@
   --error-text: #f87171;
   --error-bg: #7f1d1d;
   --error-light: #fca5a5;
+  --accent-teal: #4DF0D0;
 }
 
 [data-theme="light"] {
@@ -38,11 +39,12 @@
   --error-text: #dc2626;
   --error-bg: #fef2f2;
   --error-light: #dc2626;
+  --accent-teal: #4DF0D0;
 }
 
 /* Base styles */
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 

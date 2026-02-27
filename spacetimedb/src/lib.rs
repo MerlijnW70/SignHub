@@ -107,6 +107,23 @@ pub struct Connection {
     pub company_b: u64,
     pub status: ConnectionStatus,
     pub requested_by: Identity,
+    pub blocked_by: Option<Identity>,
+    pub initial_message: String,
+    pub created_at: Timestamp,
+}
+
+/// Chat messages exchanged within a connection (during Pending or Accepted).
+#[spacetimedb::table(
+    accessor = connection_chat, public,
+    index(accessor = chat_by_connection, btree(columns = [connection_id]))
+)]
+pub struct ConnectionChat {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub connection_id: u64,
+    pub sender: Identity,
+    pub text: String,
     pub created_at: Timestamp,
 }
 
@@ -124,6 +141,7 @@ const MAX_LOCATION: usize = 100;
 const MAX_BIO: usize = 500;
 const MAX_KVK_NUMBER: usize = 20;
 const MAX_INVITE_CODE: usize = 25;
+const MAX_MESSAGE: usize = 500;
 
 /// Validates that a trimmed string does not exceed `max_len` characters.
 ///
@@ -196,6 +214,20 @@ fn find_connection(ctx: &ReducerContext, a: u64, b: u64) -> Option<Connection> {
         .filter(&lo)
         .find(|c| c.company_b == hi);
     result
+}
+
+/// Deletes all chat messages associated with a connection.
+fn delete_connection_chat(ctx: &ReducerContext, connection_id: u64) {
+    let chat_ids: Vec<u64> = ctx
+        .db
+        .connection_chat()
+        .chat_by_connection()
+        .filter(&connection_id)
+        .map(|c| c.id)
+        .collect();
+    for id in chat_ids {
+        ctx.db.connection_chat().id().delete(id);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -812,32 +844,58 @@ pub fn transfer_ownership(
 // Phase 5 — Inter-Company Connections
 // ---------------------------------------------------------------------------
 
-/// Request a connection with another company. Requires Admin+.
+/// Helper: determine which company the `requested_by` identity belongs to.
+///
+/// # Errors
+///
+/// Returns an error if the requesting user or their company cannot be found.
+fn requesting_company_id(ctx: &ReducerContext, conn: &Connection) -> Result<u64, String> {
+    let account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(conn.requested_by)
+        .ok_or("Requesting user not found")?;
+    account
+        .company_id
+        .ok_or_else(|| "Requesting user has no company".to_string())
+}
+
+/// Request a connection with another company. If the target has blocked us
+/// the call succeeds silently (ghosting — the block is never revealed).
 ///
 /// # Errors
 ///
 /// Returns an error if the caller is below Admin role, targets their own
-/// company, the target company does not exist, or a connection already exists.
+/// company, the target company does not exist, the message is too long,
+/// or a non-blocked connection already exists.
 #[spacetimedb::reducer]
+#[allow(clippy::needless_pass_by_value)]
 pub fn request_connection(
     ctx: &ReducerContext,
     target_company_id: u64,
+    message: String,
 ) -> Result<(), String> {
+    let message = message.trim().to_string();
+    validate_length(&message, "Message", MAX_MESSAGE)?;
+
     let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     if my_company_id == target_company_id {
         return Err("Cannot connect to your own company".to_string());
     }
 
-    // Verify target company exists
     ctx.db
         .company()
         .id()
         .find(target_company_id)
         .ok_or("Target company not found")?;
 
-    // Check no existing connection
-    if find_connection(ctx, my_company_id, target_company_id).is_some() {
+    if let Some(conn) = find_connection(ctx, my_company_id, target_company_id) {
+        if conn.status == ConnectionStatus::Blocked {
+            // Ghosting: silently succeed so the block is never revealed
+            return Ok(());
+        }
         return Err("A connection already exists between these companies".to_string());
     }
 
@@ -853,73 +911,109 @@ pub fn request_connection(
         company_b: hi,
         status: ConnectionStatus::Pending,
         requested_by: ctx.sender(),
+        blocked_by: None,
+        initial_message: message,
         created_at: ctx.timestamp,
     });
 
     Ok(())
 }
 
-/// Respond to a pending connection request. Only the non-requesting company
-/// can respond. Accept = set to Accepted, reject = delete the row.
+/// Cancel a pending connection request. Only the requesting company can cancel.
 ///
 /// # Errors
 ///
-/// Returns an error if the caller is below Admin role, the connection is not
-/// found or not pending, the caller's company is the requesting side, or the
-/// connection does not involve the caller's company.
+/// Returns an error if the caller is below Admin role, no pending connection
+/// exists, or the caller's company is not the requesting side.
 #[spacetimedb::reducer]
-pub fn respond_to_connection(
+pub fn cancel_request(
     ctx: &ReducerContext,
-    connection_id: u64,
-    accept: bool,
+    target_company_id: u64,
 ) -> Result<(), String> {
     let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
-    let conn = ctx
-        .db
-        .company_connection()
-        .id()
-        .find(connection_id)
-        .ok_or("Connection not found")?;
+    let conn = find_connection(ctx, my_company_id, target_company_id)
+        .ok_or("No connection exists")?;
 
     if conn.status != ConnectionStatus::Pending {
         return Err("Connection is not pending".to_string());
     }
 
-    // Only the non-requesting company can respond
-    let requesting_account = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(conn.requested_by)
-        .ok_or("Requesting user not found")?;
-
-    let requesting_company = requesting_account
-        .company_id
-        .ok_or("Requesting user has no company")?;
-
-    if requesting_company == my_company_id {
-        return Err("You cannot respond to your own connection request".to_string());
+    if requesting_company_id(ctx, &conn)? != my_company_id {
+        return Err("Only the requesting side can cancel a request".to_string());
     }
 
-    // Verify caller belongs to the other company in the connection
-    if conn.company_a != my_company_id && conn.company_b != my_company_id {
-        return Err("This connection does not involve your company".to_string());
+    delete_connection_chat(ctx, conn.id);
+    ctx.db.company_connection().id().delete(conn.id);
+    Ok(())
+}
+
+/// Accept a pending connection request. Only the non-requesting company
+/// can accept.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, no pending connection
+/// exists, or the caller's company is the requesting side.
+#[spacetimedb::reducer]
+pub fn accept_connection(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let conn = find_connection(ctx, my_company_id, target_company_id)
+        .ok_or("No connection exists")?;
+
+    if conn.status != ConnectionStatus::Pending {
+        return Err("Connection is not pending".to_string());
     }
 
-    if accept {
-        ctx.db.company_connection().id().update(Connection {
-            status: ConnectionStatus::Accepted,
-            ..conn
-        });
-    } else {
-        ctx.db.company_connection().id().delete(connection_id);
+    if requesting_company_id(ctx, &conn)? == my_company_id {
+        return Err("You cannot accept your own connection request".to_string());
     }
+
+    ctx.db.company_connection().id().update(Connection {
+        status: ConnectionStatus::Accepted,
+        ..conn
+    });
 
     Ok(())
 }
 
-/// Block a company. Updates existing connection to Blocked, or creates one.
+/// Decline a pending connection request (soft reject — deletes the row).
+/// Only the non-requesting company can decline.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, no pending connection
+/// exists, or the caller's company is the requesting side.
+#[spacetimedb::reducer]
+pub fn decline_connection(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let conn = find_connection(ctx, my_company_id, target_company_id)
+        .ok_or("No connection exists")?;
+
+    if conn.status != ConnectionStatus::Pending {
+        return Err("Connection is not pending".to_string());
+    }
+
+    if requesting_company_id(ctx, &conn)? == my_company_id {
+        return Err("You cannot decline your own connection request".to_string());
+    }
+
+    delete_connection_chat(ctx, conn.id);
+    ctx.db.company_connection().id().delete(conn.id);
+    Ok(())
+}
+
+/// Block a company. Works from any state — updates an existing connection to
+/// Blocked, or creates a new Blocked row. If already blocked, silently
+/// succeeds without overwriting the original `blocked_by`.
 ///
 /// # Errors
 ///
@@ -937,9 +1031,13 @@ pub fn block_company(
     }
 
     if let Some(conn) = find_connection(ctx, my_company_id, target_company_id) {
+        if conn.status == ConnectionStatus::Blocked {
+            // Already blocked — keep original blocker, silently succeed
+            return Ok(());
+        }
         ctx.db.company_connection().id().update(Connection {
             status: ConnectionStatus::Blocked,
-            requested_by: ctx.sender(),
+            blocked_by: Some(ctx.sender()),
             ..conn
         });
     } else {
@@ -955,6 +1053,8 @@ pub fn block_company(
             company_b: hi,
             status: ConnectionStatus::Blocked,
             requested_by: ctx.sender(),
+            blocked_by: Some(ctx.sender()),
+            initial_message: String::new(),
             created_at: ctx.timestamp,
         });
     }
@@ -962,12 +1062,12 @@ pub fn block_company(
     Ok(())
 }
 
-/// Unblock a company. Deletes the Blocked connection row.
+/// Unblock a company. Only the company that performed the block can unblock.
 ///
 /// # Errors
 ///
-/// Returns an error if the caller is below Admin role, no connection exists,
-/// or the connection is not in Blocked status.
+/// Returns an error if the caller is below Admin role, no blocked connection
+/// exists, or the caller's company is not the one that performed the block.
 #[spacetimedb::reducer]
 pub fn unblock_company(
     ctx: &ReducerContext,
@@ -980,6 +1080,19 @@ pub fn unblock_company(
 
     if conn.status != ConnectionStatus::Blocked {
         return Err("Connection is not blocked".to_string());
+    }
+
+    // Only the company that blocked can unblock
+    if let Some(blocker_identity) = conn.blocked_by {
+        if let Some(blocker_account) =
+            ctx.db.user_account().identity().find(blocker_identity)
+        {
+            if blocker_account.company_id != Some(my_company_id) {
+                return Err("Only the company that blocked can unblock".to_string());
+            }
+        } else {
+            // Blocker left the platform — allow any involved admin to clean up
+        }
     }
 
     ctx.db.company_connection().id().delete(conn.id);
@@ -1006,6 +1119,69 @@ pub fn disconnect_company(
         return Err("Connection is not active".to_string());
     }
 
+    delete_connection_chat(ctx, conn.id);
     ctx.db.company_connection().id().delete(conn.id);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Connection Chat
+// ---------------------------------------------------------------------------
+
+/// Send a chat message within a connection. Only allowed when the connection
+/// is Pending or Accepted, and the caller belongs to one of the two companies.
+///
+/// # Errors
+///
+/// Returns an error if the caller has no account or company, the connection
+/// is not found, the connection is Blocked, the caller's company is not
+/// part of the connection, or the message is empty or too long.
+#[spacetimedb::reducer]
+#[allow(clippy::needless_pass_by_value)]
+pub fn send_connection_chat(
+    ctx: &ReducerContext,
+    connection_id: u64,
+    text: String,
+) -> Result<(), String> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Message cannot be empty".to_string());
+    }
+    validate_length(&text, "Message", MAX_MESSAGE)?;
+
+    let account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Create an account first")?;
+
+    let my_company_id = account
+        .company_id
+        .ok_or("You must belong to a company first")?;
+
+    let conn = ctx
+        .db
+        .company_connection()
+        .id()
+        .find(connection_id)
+        .ok_or("Connection not found")?;
+
+    if conn.status == ConnectionStatus::Blocked {
+        return Err("Cannot chat on a blocked connection".to_string());
+    }
+
+    if conn.company_a != my_company_id && conn.company_b != my_company_id {
+        return Err("Your company is not part of this connection".to_string());
+    }
+
+    ctx.db.connection_chat().insert(ConnectionChat {
+        id: 0,
+        connection_id,
+        sender: ctx.sender(),
+        text,
+        created_at: ctx.timestamp,
+    });
+
     Ok(())
 }

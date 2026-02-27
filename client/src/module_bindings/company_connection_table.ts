@@ -22,5 +22,7 @@ export default __t.row({
     return ConnectionStatus;
   },
   requestedBy: __t.identity().name("requested_by"),
+  blockedBy: __t.option(__t.identity()).name("blocked_by"),
+  initialMessage: __t.string().name("initial_message"),
   createdAt: __t.timestamp().name("created_at"),
 });

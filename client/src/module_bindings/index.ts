@@ -34,17 +34,20 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptConnectionReducer from "./accept_connection_reducer";
 import AddColleagueByIdentityReducer from "./add_colleague_by_identity_reducer";
 import BlockCompanyReducer from "./block_company_reducer";
+import CancelRequestReducer from "./cancel_request_reducer";
 import CreateAccountReducer from "./create_account_reducer";
 import CreateCompanyReducer from "./create_company_reducer";
+import DeclineConnectionReducer from "./decline_connection_reducer";
 import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
 import DisconnectCompanyReducer from "./disconnect_company_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
 import JoinCompanyReducer from "./join_company_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
 import RequestConnectionReducer from "./request_connection_reducer";
-import RespondToConnectionReducer from "./respond_to_connection_reducer";
+import SendConnectionChatReducer from "./send_connection_chat_reducer";
 import TransferOwnershipReducer from "./transfer_ownership_reducer";
 import UnblockCompanyReducer from "./unblock_company_reducer";
 import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
@@ -58,6 +61,7 @@ import UpdateUserRoleReducer from "./update_user_role_reducer";
 import CapabilityRow from "./capability_table";
 import CompanyRow from "./company_table";
 import CompanyConnectionRow from "./company_connection_table";
+import ConnectionChatRow from "./connection_chat_table";
 import InviteCodeRow from "./invite_code_table";
 import OnlineUserRow from "./online_user_table";
 import UserAccountRow from "./user_account_table";
@@ -109,6 +113,20 @@ const tablesSchema = __schema({
       { name: 'company_connection_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CompanyConnectionRow),
+  connection_chat: __table({
+    name: 'connection_chat',
+    indexes: [
+      { name: 'chat_by_connection', algorithm: 'btree', columns: [
+        'connectionId',
+      ] },
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'connection_chat_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ConnectionChatRow),
   invite_code: __table({
     name: 'invite_code',
     indexes: [
@@ -152,17 +170,20 @@ const tablesSchema = __schema({
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("accept_connection", AcceptConnectionReducer),
   __reducerSchema("add_colleague_by_identity", AddColleagueByIdentityReducer),
   __reducerSchema("block_company", BlockCompanyReducer),
+  __reducerSchema("cancel_request", CancelRequestReducer),
   __reducerSchema("create_account", CreateAccountReducer),
   __reducerSchema("create_company", CreateCompanyReducer),
+  __reducerSchema("decline_connection", DeclineConnectionReducer),
   __reducerSchema("delete_invite_code", DeleteInviteCodeReducer),
   __reducerSchema("disconnect_company", DisconnectCompanyReducer),
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
   __reducerSchema("join_company", JoinCompanyReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
   __reducerSchema("request_connection", RequestConnectionReducer),
-  __reducerSchema("respond_to_connection", RespondToConnectionReducer),
+  __reducerSchema("send_connection_chat", SendConnectionChatReducer),
   __reducerSchema("transfer_ownership", TransferOwnershipReducer),
   __reducerSchema("unblock_company", UnblockCompanyReducer),
   __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),

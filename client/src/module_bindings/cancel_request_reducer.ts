@@ -12,5 +12,4 @@ import {
 
 export default {
   targetCompanyId: __t.u64(),
-  message: __t.string(),
 };

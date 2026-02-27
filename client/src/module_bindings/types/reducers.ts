@@ -6,17 +6,20 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import AcceptConnectionReducer from "../accept_connection_reducer";
 import AddColleagueByIdentityReducer from "../add_colleague_by_identity_reducer";
 import BlockCompanyReducer from "../block_company_reducer";
+import CancelRequestReducer from "../cancel_request_reducer";
 import CreateAccountReducer from "../create_account_reducer";
 import CreateCompanyReducer from "../create_company_reducer";
+import DeclineConnectionReducer from "../decline_connection_reducer";
 import DeleteInviteCodeReducer from "../delete_invite_code_reducer";
 import DisconnectCompanyReducer from "../disconnect_company_reducer";
 import GenerateInviteCodeReducer from "../generate_invite_code_reducer";
 import JoinCompanyReducer from "../join_company_reducer";
 import RemoveColleagueReducer from "../remove_colleague_reducer";
 import RequestConnectionReducer from "../request_connection_reducer";
-import RespondToConnectionReducer from "../respond_to_connection_reducer";
+import SendConnectionChatReducer from "../send_connection_chat_reducer";
 import TransferOwnershipReducer from "../transfer_ownership_reducer";
 import UnblockCompanyReducer from "../unblock_company_reducer";
 import UpdateCapabilitiesReducer from "../update_capabilities_reducer";
@@ -24,17 +27,20 @@ import UpdateCompanyProfileReducer from "../update_company_profile_reducer";
 import UpdateProfileReducer from "../update_profile_reducer";
 import UpdateUserRoleReducer from "../update_user_role_reducer";
 
+export type AcceptConnectionParams = __Infer<typeof AcceptConnectionReducer>;
 export type AddColleagueByIdentityParams = __Infer<typeof AddColleagueByIdentityReducer>;
 export type BlockCompanyParams = __Infer<typeof BlockCompanyReducer>;
+export type CancelRequestParams = __Infer<typeof CancelRequestReducer>;
 export type CreateAccountParams = __Infer<typeof CreateAccountReducer>;
 export type CreateCompanyParams = __Infer<typeof CreateCompanyReducer>;
+export type DeclineConnectionParams = __Infer<typeof DeclineConnectionReducer>;
 export type DeleteInviteCodeParams = __Infer<typeof DeleteInviteCodeReducer>;
 export type DisconnectCompanyParams = __Infer<typeof DisconnectCompanyReducer>;
 export type GenerateInviteCodeParams = __Infer<typeof GenerateInviteCodeReducer>;
 export type JoinCompanyParams = __Infer<typeof JoinCompanyReducer>;
 export type RemoveColleagueParams = __Infer<typeof RemoveColleagueReducer>;
 export type RequestConnectionParams = __Infer<typeof RequestConnectionReducer>;
-export type RespondToConnectionParams = __Infer<typeof RespondToConnectionReducer>;
+export type SendConnectionChatParams = __Infer<typeof SendConnectionChatReducer>;
 export type TransferOwnershipParams = __Infer<typeof TransferOwnershipReducer>;
 export type UnblockCompanyParams = __Infer<typeof UnblockCompanyReducer>;
 export type UpdateCapabilitiesParams = __Infer<typeof UpdateCapabilitiesReducer>;

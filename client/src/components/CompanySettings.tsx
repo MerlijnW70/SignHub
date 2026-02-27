@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { tables, reducers } from '../module_bindings'
 import { useFormAction } from '../hooks/useFormAction'
+import { toHex } from '../hooks/useIdentity'
 import type { Company } from '../module_bindings/types'
 
 interface CompanySettingsProps {
@@ -75,6 +76,32 @@ export function CompanySettings({ company }: CompanySettingsProps) {
       () => updateCapabilities({ canInstall, hasCnc, hasLargeFormat, hasBucketTruck }),
       'Capabilities updated'
     )
+  }
+
+  // Blocked companies — filter connections where our company performed the block
+  const [allConnections] = useTable(tables.company_connection)
+  const [allCompanies] = useTable(tables.company)
+  const [allAccounts] = useTable(tables.user_account)
+  const unblockCompany = useReducer(reducers.unblockCompany)
+  const blockAction = useFormAction()
+
+  const blockedByUs = allConnections.filter(c => {
+    if (c.status.tag !== 'Blocked') return false
+    if (c.companyA !== company.id && c.companyB !== company.id) return false
+    // Only show if the blocker belongs to our company
+    if (!c.blockedBy) return false
+    const blockerAccount = allAccounts.find(
+      a => toHex(a.identity) === toHex(c.blockedBy!)
+    )
+    return blockerAccount?.companyId === company.id
+  })
+
+  const getOtherCompanyId = (conn: typeof blockedByUs[0]) =>
+    conn.companyA === company.id ? conn.companyB : conn.companyA
+
+  const getBlockedCompanyName = (companyId: bigint) => {
+    const found = allCompanies.find(c => c.id === companyId)
+    return found?.name ?? `Company #${companyId}`
   }
 
   return (
@@ -191,6 +218,34 @@ export function CompanySettings({ company }: CompanySettingsProps) {
         </form>
         )}
       </section>
+
+      {blockedByUs.length > 0 && (
+        <section className="dashboard-section">
+          <h2>Blocked Companies</h2>
+          <ul className="connection-list">
+            {blockedByUs.map(conn => (
+              <li key={String(conn.id)} className="connection-item">
+                <span className="connection-name">
+                  {getBlockedCompanyName(getOtherCompanyId(conn))}
+                </span>
+                <span className="connection-badge blocked">Blocked</span>
+                <button
+                  className="btn-accept"
+                  onClick={() => blockAction.run(
+                    () => unblockCompany({ targetCompanyId: getOtherCompanyId(conn) }),
+                    'Company unblocked'
+                  )}
+                  disabled={blockAction.loading}
+                >
+                  Unblock
+                </button>
+              </li>
+            ))}
+          </ul>
+          {blockAction.error && <p className="error">{blockAction.error}</p>}
+          {blockAction.success && <p className="success">{blockAction.success}</p>}
+        </section>
+      )}
     </>
   )
 }

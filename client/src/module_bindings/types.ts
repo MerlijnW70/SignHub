@@ -39,9 +39,20 @@ export const Connection = __t.object("Connection", {
     return ConnectionStatus;
   },
   requestedBy: __t.identity(),
+  blockedBy: __t.option(__t.identity()),
+  initialMessage: __t.string(),
   createdAt: __t.timestamp(),
 });
 export type Connection = __Infer<typeof Connection>;
+
+export const ConnectionChat = __t.object("ConnectionChat", {
+  id: __t.u64(),
+  connectionId: __t.u64(),
+  sender: __t.identity(),
+  text: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type ConnectionChat = __Infer<typeof ConnectionChat>;
 
 // The tagged union or sum type for the algebraic type `ConnectionStatus`.
 export const ConnectionStatus = __t.enum("ConnectionStatus", {
