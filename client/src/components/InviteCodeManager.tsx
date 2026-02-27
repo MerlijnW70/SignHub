@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { tables, reducers } from '../module_bindings'
+import { useFormAction } from '../hooks/useFormAction'
 
 interface InviteCodeManagerProps {
   companyId: bigint
@@ -11,31 +12,17 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
   const generateCode = useReducer(reducers.generateInviteCode)
   const deleteCode = useReducer(reducers.deleteInviteCode)
 
-  const [error, setError] = useState('')
-  const [generating, setGenerating] = useState(false)
+  const { error, success, loading, run } = useFormAction()
   const [copiedCode, setCopiedCode] = useState('')
 
   const companyCodes = allCodes.filter(c => c.companyId === companyId)
 
-  const handleGenerate = async () => {
-    setError('')
-    setGenerating(true)
-    try {
-      await generateCode({ maxUses: 10 })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setGenerating(false)
-    }
+  const handleGenerate = () => {
+    run(() => generateCode({ maxUses: 10 }), 'Invite code generated')
   }
 
-  const handleDelete = async (code: string) => {
-    setError('')
-    try {
-      await deleteCode({ code })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+  const handleDelete = (code: string) => {
+    run(() => deleteCode({ code }), 'Invite code deleted')
   }
 
   const handleCopy = async (code: string) => {
@@ -68,6 +55,7 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
                 <button
                   className="btn-remove"
                   onClick={() => handleDelete(invite.code)}
+                  disabled={loading}
                 >
                   Delete
                 </button>
@@ -80,12 +68,13 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
       <button
         className="btn-generate"
         onClick={handleGenerate}
-        disabled={generating}
+        disabled={loading}
       >
-        {generating ? 'Generating...' : 'Generate Invite Code'}
+        {loading ? 'Generating...' : 'Generate Invite Code'}
       </button>
 
       {error && <p className="error">{error}</p>}
+      {success && <p className="success">{success}</p>}
     </section>
   )
 }

@@ -9,10 +9,17 @@ export function ConnectionStatus() {
   const onlineCount = onlineUsers.filter(u => u.online).length
 
   return (
-    <div className="connection-status">
-      <span className={`dot ${isActive ? 'online' : 'offline'}`} />
-      <span>{isActive ? 'Connected' : 'Connecting...'}</span>
-      {isActive && <span className="online-count">{onlineCount} online</span>}
-    </div>
+    <>
+      {!isActive && (
+        <div className="banner-disconnected">
+          Disconnected — reconnecting...
+        </div>
+      )}
+      <div className="connection-status">
+        <span className={`dot ${isActive ? 'online' : 'offline'}`} />
+        <span>{isActive ? 'Connected' : 'Connecting...'}</span>
+        {isActive && <span className="online-count">{onlineCount} online</span>}
+      </div>
+    </>
   )
 }

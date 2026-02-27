@@ -1,22 +1,18 @@
 import { useState, type FormEvent } from 'react'
 import { useReducer } from 'spacetimedb/react'
 import { reducers } from '../module_bindings'
+import { useFormAction } from '../hooks/useFormAction'
 
 export function SignUpForm() {
   const createUserProfile = useReducer(reducers.createUserProfile)
+  const { error, loading, run } = useFormAction()
 
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
-  const [error, setError] = useState('')
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    setError('')
-    try {
-      await createUserProfile({ fullName: fullName.trim(), email: email.trim() })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+    run(() => createUserProfile({ fullName: fullName.trim(), email: email.trim() }))
   }
 
   const isValid = fullName.trim().length > 0 && email.trim().length > 0
@@ -49,8 +45,8 @@ export function SignUpForm() {
 
         {error && <p className="error">{error}</p>}
 
-        <button type="submit" disabled={!isValid}>
-          Create Account
+        <button type="submit" disabled={!isValid || loading}>
+          {loading ? 'Creating...' : 'Create Account'}
         </button>
       </form>
     </div>

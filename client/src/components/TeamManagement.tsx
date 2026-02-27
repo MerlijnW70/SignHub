@@ -1,8 +1,8 @@
-import { useState } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
 import { useIdentity } from '../hooks/useIdentity'
+import { useFormAction } from '../hooks/useFormAction'
 import type { Company } from '../module_bindings/types'
 
 interface TeamManagementProps {
@@ -16,9 +16,7 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
   const [onlineUsers] = useTable(tables.online_user)
 
   const removeColleague = useReducer(reducers.removeColleague)
-
-  const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const { error, success, loading, run } = useFormAction()
 
   const teamMembers = allProfiles.filter(
     p => p.companyId !== undefined && p.companyId !== null && p.companyId === company.id
@@ -38,15 +36,11 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
     })
   }
 
-  const handleRemove = async (memberIdentity: unknown) => {
-    setError('')
-    setSuccess('')
-    try {
-      await removeColleague({ colleagueIdentity: memberIdentity as Identity })
-      setSuccess('Colleague removed')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+  const handleRemove = (memberIdentity: unknown) => {
+    run(
+      () => removeColleague({ colleagueIdentity: memberIdentity as Identity }),
+      'Colleague removed'
+    )
   }
 
   return (
@@ -70,6 +64,7 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
                 <button
                   className="btn-remove"
                   onClick={() => handleRemove(member.identity)}
+                  disabled={loading}
                 >
                   Remove
                 </button>

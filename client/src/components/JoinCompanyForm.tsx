@@ -1,31 +1,25 @@
 import { useState, type FormEvent } from 'react'
 import { useReducer } from 'spacetimedb/react'
 import { reducers } from '../module_bindings'
+import { useFormAction } from '../hooks/useFormAction'
 
 export function JoinCompanyForm({ onBack }: { onBack: () => void }) {
   const joinCompany = useReducer(reducers.joinCompany)
+  const { error, loading, run } = useFormAction()
 
   const [code, setCode] = useState('')
-  const [error, setError] = useState('')
 
   const formatCode = (value: string): string => {
-    // Strip everything except alphanumeric
     const clean = value.toUpperCase().replace(/[^A-Z0-9]/g, '')
-    // Auto-insert dash after 4 chars
     if (clean.length > 4) {
       return clean.slice(0, 4) + '-' + clean.slice(4, 8)
     }
     return clean
   }
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    setError('')
-    try {
-      await joinCompany({ code: code.trim() })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+    run(() => joinCompany({ code: code.trim() }))
   }
 
   const isValid = code.replace(/-/g, '').length === 8
@@ -50,8 +44,8 @@ export function JoinCompanyForm({ onBack }: { onBack: () => void }) {
 
         {error && <p className="error">{error}</p>}
 
-        <button type="submit" disabled={!isValid}>
-          Join Company
+        <button type="submit" disabled={!isValid || loading}>
+          {loading ? 'Joining...' : 'Join Company'}
         </button>
       </form>
 

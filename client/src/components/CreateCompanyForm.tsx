@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useReducer } from 'spacetimedb/react'
 import { reducers } from '../module_bindings'
+import { useFormAction } from '../hooks/useFormAction'
 
 function toSlug(name: string): string {
   return name
@@ -12,12 +13,12 @@ function toSlug(name: string): string {
 
 export function CreateCompanyForm({ onBack }: { onBack: () => void }) {
   const createCompany = useReducer(reducers.createCompany)
+  const { error, loading, run } = useFormAction()
 
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugEdited, setSlugEdited] = useState(false)
   const [location, setLocation] = useState('')
-  const [error, setError] = useState('')
 
   const handleNameChange = (value: string) => {
     setName(value)
@@ -31,18 +32,13 @@ export function CreateCompanyForm({ onBack }: { onBack: () => void }) {
     setSlug(toSlug(value))
   }
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    setError('')
-    try {
-      await createCompany({
-        name: name.trim(),
-        slug: slug.trim(),
-        location: location.trim(),
-      })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
+    run(() => createCompany({
+      name: name.trim(),
+      slug: slug.trim(),
+      location: location.trim(),
+    }))
   }
 
   const isValid = name.trim().length > 0 && slug.trim().length > 0 && location.trim().length > 0
@@ -86,8 +82,8 @@ export function CreateCompanyForm({ onBack }: { onBack: () => void }) {
 
         {error && <p className="error">{error}</p>}
 
-        <button type="submit" disabled={!isValid}>
-          Create Company
+        <button type="submit" disabled={!isValid || loading}>
+          {loading ? 'Creating...' : 'Create Company'}
         </button>
       </form>
 
