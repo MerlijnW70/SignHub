@@ -4,18 +4,23 @@ import { reducers } from '../module_bindings'
 import { useFormAction } from '../hooks/useFormAction'
 
 export function SignUpForm() {
-  const createUserProfile = useReducer(reducers.createUserProfile)
+  const createAccount = useReducer(reducers.createAccount)
   const { error, loading, run } = useFormAction()
 
   const [fullName, setFullName] = useState('')
+  const [nickname, setNickname] = useState('')
   const [email, setEmail] = useState('')
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    run(() => createUserProfile({ fullName: fullName.trim(), email: email.trim() }))
+    run(() => createAccount({
+      fullName: fullName.trim(),
+      nickname: nickname.trim(),
+      email: email.trim(),
+    }))
   }
 
-  const isValid = fullName.trim().length > 0 && email.trim().length > 0
+  const isValid = fullName.trim().length > 0 && nickname.trim().length > 0 && email.trim().length > 0
 
   return (
     <div className="form-container">
@@ -27,9 +32,19 @@ export function SignUpForm() {
           Full Name
           <input
             type="text"
-            placeholder="John Smith"
+            placeholder="Merlijn van der Waal"
             value={fullName}
             onChange={e => setFullName(e.target.value)}
+          />
+        </label>
+
+        <label>
+          Nickname
+          <input
+            type="text"
+            placeholder="Merlijn"
+            value={nickname}
+            onChange={e => setNickname(e.target.value)}
           />
         </label>
 
@@ -37,7 +52,7 @@ export function SignUpForm() {
           Email
           <input
             type="email"
-            placeholder="john@signshop.com"
+            placeholder="merlijn@signshop.com"
             value={email}
             onChange={e => setEmail(e.target.value)}
           />

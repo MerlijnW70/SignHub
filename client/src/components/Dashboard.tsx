@@ -2,17 +2,18 @@ import { ConnectionStatus } from './ConnectionStatus'
 import { TeamManagement } from './TeamManagement'
 import { InviteCodeManager } from './InviteCodeManager'
 import { CompanySettings } from './CompanySettings'
-import type { UserProfile } from '../module_bindings/types'
+import { ConnectionManager } from './ConnectionManager'
+import type { UserAccount } from '../module_bindings/types'
 import type { Company } from '../module_bindings/types'
 
 interface DashboardProps {
-  profile: UserProfile
+  account: UserAccount
   company: Company
 }
 
-export function Dashboard({ profile, company }: DashboardProps) {
-  const roleTag = profile.role.tag
-  const canManage = roleTag !== 'Member'
+export function Dashboard({ account, company }: DashboardProps) {
+  const roleTag = account.role.tag
+  const canManage = roleTag !== 'Member' && roleTag !== 'Field'
 
   return (
     <div className="dashboard">
@@ -30,11 +31,15 @@ export function Dashboard({ profile, company }: DashboardProps) {
         <div className="info-grid">
           <div className="info-item">
             <span className="info-label">Name</span>
-            <span className="info-value">{profile.fullName}</span>
+            <span className="info-value">{account.fullName}</span>
+          </div>
+          <div className="info-item">
+            <span className="info-label">Nickname</span>
+            <span className="info-value">{account.nickname}</span>
           </div>
           <div className="info-item">
             <span className="info-label">Email</span>
-            <span className="info-value">{profile.email}</span>
+            <span className="info-value">{account.email}</span>
           </div>
           <div className="info-item">
             <span className="info-label">Role</span>
@@ -50,6 +55,8 @@ export function Dashboard({ profile, company }: DashboardProps) {
       <TeamManagement company={company} myRole={roleTag} />
 
       {canManage && <InviteCodeManager companyId={company.id} />}
+
+      {canManage && <ConnectionManager company={company} />}
     </div>
   )
 }

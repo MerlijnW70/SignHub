@@ -1,16 +1,25 @@
 use spacetimedb::rand::RngCore;
-use spacetimedb::{Identity, ReducerContext, SpacetimeType, Table};
+use spacetimedb::{Identity, ReducerContext, SpacetimeType, Table, Timestamp};
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/// Three-tier role hierarchy: Owner > Manager > Member.
-#[derive(SpacetimeType, Clone, Debug, PartialEq)]
+/// Four-tier role hierarchy: Owner > Admin > Member > Field.
+#[derive(SpacetimeType, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UserRole {
     Owner,
-    Manager,
+    Admin,
     Member,
+    Field,
+}
+
+/// Status of a connection between two companies.
+#[derive(SpacetimeType, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ConnectionStatus {
+    Pending,
+    Accepted,
+    Blocked,
 }
 
 // ---------------------------------------------------------------------------
@@ -27,14 +36,19 @@ pub struct OnlineUser {
 
 /// A registered user account. Every connected identity that completes sign-up
 /// gets one row here.
-#[spacetimedb::table(accessor = user_profile, public)]
-pub struct UserProfile {
+#[spacetimedb::table(
+    accessor = user_account, public,
+    index(accessor = account_by_company, btree(columns = [company_id]))
+)]
+pub struct UserAccount {
     #[primary_key]
     pub identity: Identity,
-    pub company_id: Option<u64>,
     pub full_name: String,
+    pub nickname: String,
     pub email: String,
+    pub company_id: Option<u64>,
     pub role: UserRole,
+    pub created_at: Timestamp,
 }
 
 /// A sign-shop / company in the directory.
@@ -50,10 +64,14 @@ pub struct Company {
     pub location: String,
     pub bio: String,
     pub is_public: bool,
+    pub kvk_number: String,
 }
 
 /// Invite codes that allow users to join a company without admin hex-pasting.
-#[spacetimedb::table(accessor = invite_code, public)]
+#[spacetimedb::table(
+    accessor = invite_code, public,
+    index(accessor = invite_by_company, btree(columns = [company_id]))
+)]
 pub struct InviteCode {
     #[primary_key]
     #[unique]
@@ -75,45 +93,109 @@ pub struct Capability {
     pub has_bucket_truck: bool,
 }
 
+/// A connection between two companies. `company_a` is always the lower ID.
+#[spacetimedb::table(
+    accessor = company_connection, public,
+    index(accessor = conn_by_company_a, btree(columns = [company_a])),
+    index(accessor = conn_by_company_b, btree(columns = [company_b]))
+)]
+pub struct Connection {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub company_a: u64,
+    pub company_b: u64,
+    pub status: ConnectionStatus,
+    pub requested_by: Identity,
+    pub created_at: Timestamp,
+}
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+
+/// Maximum allowed string lengths for user-facing fields.
+const MAX_FULL_NAME: usize = 50;
+const MAX_NICKNAME: usize = 25;
+const MAX_EMAIL: usize = 100;
+const MAX_COMPANY_NAME: usize = 50;
+const MAX_SLUG: usize = 50;
+const MAX_LOCATION: usize = 100;
+const MAX_BIO: usize = 500;
+const MAX_KVK_NUMBER: usize = 20;
+const MAX_INVITE_CODE: usize = 25;
+
+/// Validates that a trimmed string does not exceed `max_len` characters.
+///
+/// # Errors
+///
+/// Returns a descriptive error if the string is too long.
+fn validate_length(value: &str, field: &str, max_len: usize) -> Result<(), String> {
+    if value.len() > max_len {
+        return Err(format!("{field} is too long (max {max_len} characters)"));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Permission helpers
 // ---------------------------------------------------------------------------
 
 /// Returns a numeric level for role comparison. Higher = more privileged.
-fn role_level(role: &UserRole) -> u8 {
+const fn role_level(role: UserRole) -> u8 {
     match role {
-        UserRole::Member => 0,
-        UserRole::Manager => 1,
-        UserRole::Owner => 2,
+        UserRole::Field => 0,
+        UserRole::Member => 1,
+        UserRole::Admin => 2,
+        UserRole::Owner => 3,
     }
 }
 
-/// Retrieves the caller's profile and verifies they have at least `min_role`.
-/// Returns the profile and the company_id on success.
+/// Retrieves the caller's account and verifies they have at least `min_role`.
+/// Returns the account and the `company_id` on success.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - The caller has no account.
+/// - The caller does not belong to a company.
+/// - The caller's role is below `min_role`.
 fn require_role_at_least(
     ctx: &ReducerContext,
     min_role: UserRole,
-) -> Result<(UserProfile, u64), String> {
-    let profile = ctx
+) -> Result<(UserAccount, u64), String> {
+    let account = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create a profile first")?;
+        .ok_or("Create an account first")?;
 
-    let company_id = profile
+    let company_id = account
         .company_id
         .ok_or("You must belong to a company first")?;
 
-    if role_level(&profile.role) < role_level(&min_role) {
+    if role_level(account.role) < role_level(min_role) {
         return Err(match min_role {
             UserRole::Owner => "Only the owner can do this".to_string(),
-            UserRole::Manager => "Only managers and owners can do this".to_string(),
-            UserRole::Member => "You do not have permission".to_string(),
+            UserRole::Admin => "Only admins and owners can do this".to_string(),
+            UserRole::Member | UserRole::Field => "You do not have permission".to_string(),
         });
     }
 
-    Ok((profile, company_id))
+    Ok((account, company_id))
+}
+
+/// Finds an existing connection between two companies (order-independent).
+fn find_connection(ctx: &ReducerContext, a: u64, b: u64) -> Option<Connection> {
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    let result = ctx
+        .db
+        .company_connection()
+        .conn_by_company_a()
+        .filter(&lo)
+        .find(|c| c.company_b == hi);
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -152,47 +234,98 @@ pub fn client_disconnected(ctx: &ReducerContext) {
 // Phase 1 — Onboarding
 // ---------------------------------------------------------------------------
 
-/// Register a new user profile for the calling identity.
+/// Register a new user account for the calling identity.
 ///
 /// # Errors
-/// Returns an error if the name or email is empty, or if the identity already
-/// has a profile.
+///
+/// Returns an error if any field is empty or the account already exists.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
-pub fn create_user_profile(
+pub fn create_account(
     ctx: &ReducerContext,
     full_name: String,
+    nickname: String,
     email: String,
 ) -> Result<(), String> {
     let full_name = full_name.trim().to_string();
+    let nickname = nickname.trim().to_string();
     let email = email.trim().to_string();
 
     if full_name.is_empty() {
         return Err("Name cannot be empty".to_string());
     }
+    if nickname.is_empty() {
+        return Err("Nickname cannot be empty".to_string());
+    }
     if email.is_empty() {
         return Err("Email cannot be empty".to_string());
     }
-    if ctx.db.user_profile().identity().find(ctx.sender()).is_some() {
-        return Err("Profile already exists".to_string());
+    validate_length(&full_name, "Full name", MAX_FULL_NAME)?;
+    validate_length(&nickname, "Nickname", MAX_NICKNAME)?;
+    validate_length(&email, "Email", MAX_EMAIL)?;
+    if ctx.db.user_account().identity().find(ctx.sender()).is_some() {
+        return Err("Account already exists".to_string());
     }
 
-    ctx.db.user_profile().insert(UserProfile {
+    ctx.db.user_account().insert(UserAccount {
         identity: ctx.sender(),
-        company_id: None,
         full_name,
+        nickname,
         email,
+        company_id: None,
         role: UserRole::Member,
+        created_at: ctx.timestamp,
     });
 
     Ok(())
 }
 
-/// Create a new company and link the caller as its admin owner.
+/// User updates their own profile (nickname and email only).
 ///
 /// # Errors
-/// Returns an error if the caller has no profile, already belongs to a
-/// company, or if the name/slug/location is empty.
+///
+/// Returns an error if any field is empty or the account does not exist.
+#[spacetimedb::reducer]
+#[allow(clippy::needless_pass_by_value)]
+pub fn update_profile(
+    ctx: &ReducerContext,
+    nickname: String,
+    email: String,
+) -> Result<(), String> {
+    let nickname = nickname.trim().to_string();
+    let email = email.trim().to_string();
+
+    if nickname.is_empty() {
+        return Err("Nickname cannot be empty".to_string());
+    }
+    if email.is_empty() {
+        return Err("Email cannot be empty".to_string());
+    }
+    validate_length(&nickname, "Nickname", MAX_NICKNAME)?;
+    validate_length(&email, "Email", MAX_EMAIL)?;
+
+    let account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Account not found")?;
+
+    ctx.db.user_account().identity().update(UserAccount {
+        nickname,
+        email,
+        ..account
+    });
+
+    Ok(())
+}
+
+/// Create a new company and link the caller as its owner.
+///
+/// # Errors
+///
+/// Returns an error if any required field is empty, the slug is taken,
+/// the caller has no account, or the caller already belongs to a company.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn create_company(
@@ -214,15 +347,18 @@ pub fn create_company(
     if location.is_empty() {
         return Err("Location cannot be empty".to_string());
     }
+    validate_length(&name, "Company name", MAX_COMPANY_NAME)?;
+    validate_length(&slug, "Slug", MAX_SLUG)?;
+    validate_length(&location, "Location", MAX_LOCATION)?;
 
-    let profile = ctx
+    let account = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create a profile first")?;
+        .ok_or("Create an account first")?;
 
-    if profile.company_id.is_some() {
+    if account.company_id.is_some() {
         return Err("You already belong to a company".to_string());
     }
 
@@ -239,6 +375,7 @@ pub fn create_company(
         location,
         bio: String::new(),
         is_public: false,
+        kvk_number: String::new(),
     });
 
     // Create default capabilities row
@@ -251,10 +388,10 @@ pub fn create_company(
     });
 
     // Link user to company as owner
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         company_id: Some(company.id),
         role: UserRole::Owner,
-        ..profile
+        ..account
     });
 
     Ok(())
@@ -263,18 +400,19 @@ pub fn create_company(
 /// Admin generates an invite code for their company.
 ///
 /// # Errors
-/// Returns an error if the caller is not an admin or doesn't belong to a
-/// company.
+///
+/// Returns an error if the caller is below Admin role.
 #[spacetimedb::reducer]
 pub fn generate_invite_code(ctx: &ReducerContext, max_uses: u32) -> Result<(), String> {
-    let (_profile, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
-    // Build a short readable code from the deterministic RNG
-    let charset = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I ambiguity
-    let mut code = String::with_capacity(8);
+    // Build a readable 16-character code (XXXX-XXXX-XXXX-XXXX) from the
+    // deterministic RNG. Uses an unambiguous charset (no 0/O/1/I).
+    let charset = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut code = String::with_capacity(19); // 16 chars + 3 dashes
     let mut rng = ctx.rng();
-    for i in 0..8 {
-        if i == 4 {
+    for i in 0..16 {
+        if i > 0 && i % 4 == 0 {
             code.push('-');
         }
         #[allow(clippy::cast_possible_truncation)] // Modulo charset.len() keeps value small
@@ -295,21 +433,23 @@ pub fn generate_invite_code(ctx: &ReducerContext, max_uses: u32) -> Result<(), S
 /// User joins a company using an invite code.
 ///
 /// # Errors
-/// Returns an error if the caller has no profile, already belongs to a
-/// company, or the code is invalid/exhausted.
+///
+/// Returns an error if the caller has no account, already belongs to a company,
+/// the code is invalid, or the code has no remaining uses.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
     let code = code.trim().to_uppercase();
+    validate_length(&code, "Invite code", MAX_INVITE_CODE)?;
 
-    let profile = ctx
+    let account = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create a profile first")?;
+        .ok_or("Create an account first")?;
 
-    if profile.company_id.is_some() {
+    if account.company_id.is_some() {
         return Err("You already belong to a company".to_string());
     }
 
@@ -325,13 +465,15 @@ pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
     }
 
     // Link user to the company as a member
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         company_id: Some(invite.company_id),
         role: UserRole::Member,
-        ..profile
+        ..account
     });
 
-    // Decrement uses (or delete if last use)
+    // Decrement uses (or delete if last use).
+    // This is atomic: SpacetimeDB reducers are transactional, so the
+    // find → check → decrement sequence cannot race with another caller.
     if invite.uses_remaining <= 1 {
         ctx.db.invite_code().code().delete(&code);
     } else {
@@ -347,12 +489,13 @@ pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
 /// Admin deletes an invite code.
 ///
 /// # Errors
-/// Returns an error if the caller is not an admin or the code doesn't belong
-/// to their company.
+///
+/// Returns an error if the caller is below Admin role, the code is not found,
+/// or the code belongs to a different company.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn delete_invite_code(ctx: &ReducerContext, code: String) -> Result<(), String> {
-    let (_profile, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     let invite = ctx
         .db
@@ -376,27 +519,28 @@ pub fn delete_invite_code(ctx: &ReducerContext, code: String) -> Result<(), Stri
 /// Admin adds another registered user to their company.
 ///
 /// # Errors
-/// Returns an error if the caller is not an admin, the colleague has no
-/// profile, or the colleague already belongs to a company.
+///
+/// Returns an error if the caller is below Admin role, the colleague is not
+/// found, or the colleague already belongs to a company.
 #[spacetimedb::reducer]
 pub fn add_colleague_by_identity(
     ctx: &ReducerContext,
     colleague_identity: Identity,
 ) -> Result<(), String> {
-    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     let colleague = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(colleague_identity)
-        .ok_or("Colleague profile not found")?;
+        .ok_or("Colleague account not found")?;
 
     if colleague.company_id.is_some() {
         return Err("This user already belongs to a company".to_string());
     }
 
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         company_id: Some(company_id),
         role: UserRole::Member,
         ..colleague
@@ -405,12 +549,14 @@ pub fn add_colleague_by_identity(
     Ok(())
 }
 
-/// Removes a user from the company. Managers can only remove Members;
+/// Removes a user from the company. Admins can only remove Members and Field;
 /// Owners can remove anyone except themselves.
 ///
 /// # Errors
-/// Returns an error if the caller lacks permission, the colleague is not in
-/// the same company, or the caller tries to remove themselves.
+///
+/// Returns an error if the caller tries to remove themselves, is below Admin
+/// role, the colleague is not found, is not in the same company, or has an
+/// equal or higher role than the caller.
 #[spacetimedb::reducer]
 pub fn remove_colleague(
     ctx: &ReducerContext,
@@ -420,25 +566,25 @@ pub fn remove_colleague(
         return Err("Cannot remove yourself".to_string());
     }
 
-    let (caller, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     let colleague = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(colleague_identity)
-        .ok_or("Colleague profile not found")?;
+        .ok_or("Colleague account not found")?;
 
     if colleague.company_id != Some(company_id) {
         return Err("Colleague is not in your company".to_string());
     }
 
     // Hierarchy: cannot remove someone with equal or higher role
-    if role_level(&colleague.role) >= role_level(&caller.role) {
+    if role_level(colleague.role) >= role_level(caller.role) {
         return Err("You can only remove members with a lower role than yours".to_string());
     }
 
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         company_id: None,
         role: UserRole::Member,
         ..colleague
@@ -451,11 +597,12 @@ pub fn remove_colleague(
 // Phase 3 — Public Presence
 // ---------------------------------------------------------------------------
 
-/// Updates the company's public profile. Requires at least Manager role.
+/// Updates the company's public profile. Requires at least Admin role.
 ///
 /// # Errors
-/// Returns an error if the caller lacks permission, doesn't belong to a
-/// company, or the name/slug is invalid.
+///
+/// Returns an error if the caller is below Admin role, required fields are
+/// empty, or the new slug is already taken by another company.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn update_company_profile(
@@ -465,11 +612,13 @@ pub fn update_company_profile(
     location: String,
     bio: String,
     is_public: bool,
+    kvk_number: String,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
     let slug = slug.trim().to_lowercase().replace(' ', "-");
     let location = location.trim().to_string();
     let bio = bio.trim().to_string();
+    let kvk_number = kvk_number.trim().to_string();
 
     if name.is_empty() {
         return Err("Company name cannot be empty".to_string());
@@ -477,8 +626,13 @@ pub fn update_company_profile(
     if slug.is_empty() {
         return Err("Slug cannot be empty".to_string());
     }
+    validate_length(&name, "Company name", MAX_COMPANY_NAME)?;
+    validate_length(&slug, "Slug", MAX_SLUG)?;
+    validate_length(&location, "Location", MAX_LOCATION)?;
+    validate_length(&bio, "Bio", MAX_BIO)?;
+    validate_length(&kvk_number, "KVK number", MAX_KVK_NUMBER)?;
 
-    let (_profile, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     let company = ctx
         .db
@@ -498,17 +652,19 @@ pub fn update_company_profile(
         location,
         bio,
         is_public,
+        kvk_number,
         ..company
     });
 
     Ok(())
 }
 
-/// Updates the company's capabilities. Requires at least Manager role.
+/// Updates the company's capabilities. Requires at least Admin role.
 ///
 /// # Errors
-/// Returns an error if the caller lacks permission or doesn't belong to a
-/// company.
+///
+/// Returns an error if the caller is below Admin role or capabilities are not
+/// found for the company.
 #[spacetimedb::reducer]
 #[allow(clippy::fn_params_excessive_bools)] // SpacetimeDB reducer: each capability is an independent flag
 pub fn update_capabilities(
@@ -518,7 +674,7 @@ pub fn update_capabilities(
     has_large_format: bool,
     has_bucket_truck: bool,
 ) -> Result<(), String> {
-    let (_profile, company_id) = require_role_at_least(ctx, UserRole::Manager)?;
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
     let cap = ctx
         .db
@@ -547,8 +703,10 @@ pub fn update_capabilities(
 /// `transfer_ownership` for that).
 ///
 /// # Errors
-/// Returns an error if the caller is not the Owner, the target is not in the
-/// same company, or the new role is Owner.
+///
+/// Returns an error if the caller targets themselves, tries to assign Owner,
+/// is not the Owner, the target is not found or not in the same company,
+/// or the target is already an Owner.
 #[spacetimedb::reducer]
 pub fn update_user_role(
     ctx: &ReducerContext,
@@ -567,7 +725,7 @@ pub fn update_user_role(
 
     let target = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(target_identity)
         .ok_or("Target user not found")?;
@@ -580,7 +738,7 @@ pub fn update_user_role(
         return Err("Cannot change the role of another Owner".to_string());
     }
 
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         role: new_role,
         ..target
     });
@@ -589,12 +747,13 @@ pub fn update_user_role(
 }
 
 /// Transfers company ownership to another team member. The caller (current
-/// Owner) is demoted to Manager and the target becomes the new Owner.
+/// Owner) is demoted to Admin and the target becomes the new Owner.
 /// Also updates `Company.owner_identity`.
 ///
 /// # Errors
-/// Returns an error if the caller is not the Owner or the target is not in
-/// the same company.
+///
+/// Returns an error if the caller targets themselves, is not the Owner,
+/// the target is not found, or the target is not in the same company.
 #[spacetimedb::reducer]
 pub fn transfer_ownership(
     ctx: &ReducerContext,
@@ -608,7 +767,7 @@ pub fn transfer_ownership(
 
     let target = ctx
         .db
-        .user_profile()
+        .user_account()
         .identity()
         .find(new_owner_identity)
         .ok_or("Target user not found")?;
@@ -617,7 +776,7 @@ pub fn transfer_ownership(
         return Err("Target is not in your company".to_string());
     }
 
-    // Update company owner reference
+    // Update company owner reference — double-check caller is the recorded owner
     let company = ctx
         .db
         .company()
@@ -625,22 +784,228 @@ pub fn transfer_ownership(
         .find(company_id)
         .ok_or("Company not found")?;
 
+    if company.owner_identity != ctx.sender() {
+        return Err("Only the recorded company owner can transfer ownership".to_string());
+    }
+
     ctx.db.company().id().update(Company {
         owner_identity: new_owner_identity,
         ..company
     });
 
-    // Demote current owner to Manager
-    ctx.db.user_profile().identity().update(UserProfile {
-        role: UserRole::Manager,
+    // Demote current owner to Admin
+    ctx.db.user_account().identity().update(UserAccount {
+        role: UserRole::Admin,
         ..caller
     });
 
     // Promote target to Owner
-    ctx.db.user_profile().identity().update(UserProfile {
+    ctx.db.user_account().identity().update(UserAccount {
         role: UserRole::Owner,
         ..target
     });
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Inter-Company Connections
+// ---------------------------------------------------------------------------
+
+/// Request a connection with another company. Requires Admin+.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, targets their own
+/// company, the target company does not exist, or a connection already exists.
+#[spacetimedb::reducer]
+pub fn request_connection(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    if my_company_id == target_company_id {
+        return Err("Cannot connect to your own company".to_string());
+    }
+
+    // Verify target company exists
+    ctx.db
+        .company()
+        .id()
+        .find(target_company_id)
+        .ok_or("Target company not found")?;
+
+    // Check no existing connection
+    if find_connection(ctx, my_company_id, target_company_id).is_some() {
+        return Err("A connection already exists between these companies".to_string());
+    }
+
+    let (lo, hi) = if my_company_id <= target_company_id {
+        (my_company_id, target_company_id)
+    } else {
+        (target_company_id, my_company_id)
+    };
+
+    ctx.db.company_connection().insert(Connection {
+        id: 0,
+        company_a: lo,
+        company_b: hi,
+        status: ConnectionStatus::Pending,
+        requested_by: ctx.sender(),
+        created_at: ctx.timestamp,
+    });
+
+    Ok(())
+}
+
+/// Respond to a pending connection request. Only the non-requesting company
+/// can respond. Accept = set to Accepted, reject = delete the row.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, the connection is not
+/// found or not pending, the caller's company is the requesting side, or the
+/// connection does not involve the caller's company.
+#[spacetimedb::reducer]
+pub fn respond_to_connection(
+    ctx: &ReducerContext,
+    connection_id: u64,
+    accept: bool,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let conn = ctx
+        .db
+        .company_connection()
+        .id()
+        .find(connection_id)
+        .ok_or("Connection not found")?;
+
+    if conn.status != ConnectionStatus::Pending {
+        return Err("Connection is not pending".to_string());
+    }
+
+    // Only the non-requesting company can respond
+    let requesting_account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(conn.requested_by)
+        .ok_or("Requesting user not found")?;
+
+    let requesting_company = requesting_account
+        .company_id
+        .ok_or("Requesting user has no company")?;
+
+    if requesting_company == my_company_id {
+        return Err("You cannot respond to your own connection request".to_string());
+    }
+
+    // Verify caller belongs to the other company in the connection
+    if conn.company_a != my_company_id && conn.company_b != my_company_id {
+        return Err("This connection does not involve your company".to_string());
+    }
+
+    if accept {
+        ctx.db.company_connection().id().update(Connection {
+            status: ConnectionStatus::Accepted,
+            ..conn
+        });
+    } else {
+        ctx.db.company_connection().id().delete(connection_id);
+    }
+
+    Ok(())
+}
+
+/// Block a company. Updates existing connection to Blocked, or creates one.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role or targets their own
+/// company.
+#[spacetimedb::reducer]
+pub fn block_company(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    if my_company_id == target_company_id {
+        return Err("Cannot block your own company".to_string());
+    }
+
+    if let Some(conn) = find_connection(ctx, my_company_id, target_company_id) {
+        ctx.db.company_connection().id().update(Connection {
+            status: ConnectionStatus::Blocked,
+            requested_by: ctx.sender(),
+            ..conn
+        });
+    } else {
+        let (lo, hi) = if my_company_id <= target_company_id {
+            (my_company_id, target_company_id)
+        } else {
+            (target_company_id, my_company_id)
+        };
+
+        ctx.db.company_connection().insert(Connection {
+            id: 0,
+            company_a: lo,
+            company_b: hi,
+            status: ConnectionStatus::Blocked,
+            requested_by: ctx.sender(),
+            created_at: ctx.timestamp,
+        });
+    }
+
+    Ok(())
+}
+
+/// Unblock a company. Deletes the Blocked connection row.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, no connection exists,
+/// or the connection is not in Blocked status.
+#[spacetimedb::reducer]
+pub fn unblock_company(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let conn = find_connection(ctx, my_company_id, target_company_id)
+        .ok_or("No connection exists")?;
+
+    if conn.status != ConnectionStatus::Blocked {
+        return Err("Connection is not blocked".to_string());
+    }
+
+    ctx.db.company_connection().id().delete(conn.id);
+    Ok(())
+}
+
+/// Disconnect from a company. Deletes the Accepted connection row.
+///
+/// # Errors
+///
+/// Returns an error if the caller is below Admin role, no connection exists,
+/// or the connection is not in Accepted status.
+#[spacetimedb::reducer]
+pub fn disconnect_company(
+    ctx: &ReducerContext,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_caller, my_company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let conn = find_connection(ctx, my_company_id, target_company_id)
+        .ok_or("No connection exists")?;
+
+    if conn.status != ConnectionStatus::Accepted {
+        return Err("Connection is not active".to_string());
+    }
+
+    ctx.db.company_connection().id().delete(conn.id);
     Ok(())
 }

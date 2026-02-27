@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTable } from 'spacetimedb/react'
 import { tables } from './module_bindings'
-import { useIdentity } from './hooks/useIdentity'
-import { toHex } from './hooks/useIdentity'
+import { useIdentity, toHex } from './hooks/useIdentity'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { SignUpForm } from './components/SignUpForm'
 import { CreateCompanyForm } from './components/CreateCompanyForm'
@@ -11,28 +10,8 @@ import { Dashboard } from './components/Dashboard'
 import './App.css'
 
 function App() {
-  const { isActive, identity, identityHex } = useIdentity()
-  const [profiles] = useTable(tables.user_profile)
-  const [companies] = useTable(tables.company)
-  const [companyMode, setCompanyMode] = useState<'choose' | 'create' | 'join'>('choose')
-  const [companyTimeout, setCompanyTimeout] = useState(false)
+  const { isActive, identity } = useIdentity()
 
-  // Derive values needed by hooks (hooks must be called before any early return)
-  const myProfile = profiles.find(p => toHex(p.identity) === identityHex)
-  const myCompany = myProfile?.companyId != null
-    ? companies.find(c => c.id === myProfile.companyId)
-    : undefined
-
-  // Company loading timeout — show error after 10 seconds
-  useEffect(() => {
-    if (myProfile?.companyId != null && !myCompany) {
-      const timer = setTimeout(() => setCompanyTimeout(true), 10000)
-      return () => clearTimeout(timer)
-    }
-    setCompanyTimeout(false)
-  }, [myProfile?.companyId, myCompany])
-
-  // 1. Waiting for connection
   if (!isActive || !identity) {
     return (
       <div className="app center">
@@ -41,8 +20,39 @@ function App() {
     )
   }
 
-  // 2. No profile → sign up
-  if (!myProfile) {
+  return <AuthenticatedApp />
+}
+
+function AuthenticatedApp() {
+  const { identity, identityHex } = useIdentity()
+  const [companyMode, setCompanyMode] = useState<'choose' | 'create' | 'join'>('choose')
+  const [companyTimeout, setCompanyTimeout] = useState(false)
+
+  // Subscribe ONLY to my own account row
+  const [accounts] = useTable(
+    tables.user_account.where(r => r.identity.eq(identity!))
+  )
+  const myAccount = accounts.find(a => toHex(a.identity) === identityHex)
+
+  // Subscribe to all companies (single subscription handles both directory
+  // and own-company lookup; .where() on renamed columns is broken in SDK)
+  const [allCompanies] = useTable(tables.company)
+
+  const myCompany = myAccount?.companyId != null
+    ? allCompanies.find(c => c.id === myAccount.companyId)
+    : undefined
+
+  // Company loading timeout
+  useEffect(() => {
+    if (myAccount?.companyId != null && !myCompany) {
+      const timer = setTimeout(() => setCompanyTimeout(true), 10000)
+      return () => clearTimeout(timer)
+    }
+    setCompanyTimeout(false)
+  }, [myAccount?.companyId, myCompany])
+
+  // No account → sign up
+  if (!myAccount) {
     return (
       <div className="app center">
         <ConnectionStatus />
@@ -51,8 +61,8 @@ function App() {
     )
   }
 
-  // 3. No company → choose: create or join
-  if (myProfile.companyId === undefined || myProfile.companyId === null) {
+  // No company → choose: create or join
+  if (myAccount.companyId === undefined || myAccount.companyId === null) {
     return (
       <div className="app center">
         <ConnectionStatus />
@@ -80,7 +90,7 @@ function App() {
     )
   }
 
-  // 4. Company not loaded yet
+  // Company not loaded yet
   if (!myCompany) {
     return (
       <div className="app center">
@@ -93,10 +103,10 @@ function App() {
     )
   }
 
-  // 5. Dashboard
+  // Dashboard
   return (
     <div className="app">
-      <Dashboard profile={myProfile} company={myCompany} />
+      <Dashboard account={myAccount} company={myCompany} />
     </div>
   )
 }

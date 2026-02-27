@@ -16,4 +16,5 @@ export default {
   location: __t.string(),
   bio: __t.string(),
   isPublic: __t.bool(),
+  kvkNumber: __t.string(),
 };

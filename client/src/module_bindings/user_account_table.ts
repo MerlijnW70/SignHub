@@ -16,10 +16,12 @@ import {
 
 export default __t.row({
   identity: __t.identity().primaryKey(),
-  companyId: __t.option(__t.u64()).name("company_id"),
   fullName: __t.string().name("full_name"),
+  nickname: __t.string(),
   email: __t.string(),
+  companyId: __t.option(__t.u64()).name("company_id"),
   get role() {
     return UserRole;
   },
+  createdAt: __t.timestamp().name("created_at"),
 });

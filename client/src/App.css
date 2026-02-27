@@ -278,7 +278,7 @@
   color: #fde68a;
 }
 
-.role-manager {
+.role-admin {
   background: #1e3a5f;
   color: #93c5fd;
 }
@@ -288,14 +288,24 @@
   color: var(--text-muted);
 }
 
+.role-field {
+  background: #14532d;
+  color: #86efac;
+}
+
 [data-theme="light"] .role-owner {
   background: #fef3c7;
   color: #92400e;
 }
 
-[data-theme="light"] .role-manager {
+[data-theme="light"] .role-admin {
   background: #dbeafe;
   color: #1e40af;
+}
+
+[data-theme="light"] .role-field {
+  background: #dcfce7;
+  color: #166534;
 }
 
 /* Role select dropdown */
@@ -715,6 +725,141 @@
   gap: 0.75rem;
 }
 
+/* Connection manager */
+.connection-group {
+  margin-bottom: 1.5rem;
+}
+
+.connection-group h3 {
+  font-size: 0.85rem;
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.connection-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.connection-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.connection-item:last-child {
+  border-bottom: none;
+}
+
+.connection-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.connection-name strong {
+  font-size: 0.95rem;
+}
+
+.connection-location {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.connection-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.connection-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-weight: 500;
+  margin-left: 0.5rem;
+}
+
+.connection-badge.pending {
+  background: #78350f;
+  color: #fde68a;
+}
+
+.connection-badge.accepted {
+  background: #14532d;
+  color: #86efac;
+}
+
+.connection-badge.blocked {
+  background: var(--error-bg);
+  color: var(--error-light);
+}
+
+[data-theme="light"] .connection-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+[data-theme="light"] .connection-badge.accepted {
+  background: #dcfce7;
+  color: #166534;
+}
+
+[data-theme="light"] .connection-badge.blocked {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.btn-disconnect {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.btn-disconnect:hover {
+  border-color: var(--error-text);
+  color: var(--error-text);
+}
+
+.btn-disconnect:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-accept {
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--success);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--success);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.btn-accept:hover {
+  background: var(--success);
+  color: #fff;
+}
+
+.btn-accept:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.directory {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--divider);
+}
+
 /* Responsive — tablet */
 @media (max-width: 768px) {
   .info-grid {
@@ -781,6 +926,16 @@
 
   .capabilities-grid {
     grid-template-columns: 1fr;
+  }
+
+  .connection-item {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .connection-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .settings-actions {

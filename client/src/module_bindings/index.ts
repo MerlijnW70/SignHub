@@ -35,15 +35,21 @@ import {
 
 // Import all reducer arg schemas
 import AddColleagueByIdentityReducer from "./add_colleague_by_identity_reducer";
+import BlockCompanyReducer from "./block_company_reducer";
+import CreateAccountReducer from "./create_account_reducer";
 import CreateCompanyReducer from "./create_company_reducer";
-import CreateUserProfileReducer from "./create_user_profile_reducer";
 import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
+import DisconnectCompanyReducer from "./disconnect_company_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
 import JoinCompanyReducer from "./join_company_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
+import RequestConnectionReducer from "./request_connection_reducer";
+import RespondToConnectionReducer from "./respond_to_connection_reducer";
 import TransferOwnershipReducer from "./transfer_ownership_reducer";
+import UnblockCompanyReducer from "./unblock_company_reducer";
 import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
 import UpdateCompanyProfileReducer from "./update_company_profile_reducer";
+import UpdateProfileReducer from "./update_profile_reducer";
 import UpdateUserRoleReducer from "./update_user_role_reducer";
 
 // Import all procedure arg schemas
@@ -51,9 +57,10 @@ import UpdateUserRoleReducer from "./update_user_role_reducer";
 // Import all table schema definitions
 import CapabilityRow from "./capability_table";
 import CompanyRow from "./company_table";
+import CompanyConnectionRow from "./company_connection_table";
 import InviteCodeRow from "./invite_code_table";
 import OnlineUserRow from "./online_user_table";
-import UserProfileRow from "./user_profile_table";
+import UserAccountRow from "./user_account_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -85,11 +92,31 @@ const tablesSchema = __schema({
       { name: 'company_slug_key', constraint: 'unique', columns: ['slug'] },
     ],
   }, CompanyRow),
+  company_connection: __table({
+    name: 'company_connection',
+    indexes: [
+      { name: 'conn_by_company_a', algorithm: 'btree', columns: [
+        'companyA',
+      ] },
+      { name: 'conn_by_company_b', algorithm: 'btree', columns: [
+        'companyB',
+      ] },
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'company_connection_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, CompanyConnectionRow),
   invite_code: __table({
     name: 'invite_code',
     indexes: [
       { name: 'code', algorithm: 'btree', columns: [
         'code',
+      ] },
+      { name: 'invite_by_company', algorithm: 'btree', columns: [
+        'companyId',
       ] },
     ],
     constraints: [
@@ -107,31 +134,40 @@ const tablesSchema = __schema({
       { name: 'online_user_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, OnlineUserRow),
-  user_profile: __table({
-    name: 'user_profile',
+  user_account: __table({
+    name: 'user_account',
     indexes: [
+      { name: 'account_by_company', algorithm: 'btree', columns: [
+        'companyId',
+      ] },
       { name: 'identity', algorithm: 'btree', columns: [
         'identity',
       ] },
     ],
     constraints: [
-      { name: 'user_profile_identity_key', constraint: 'unique', columns: ['identity'] },
+      { name: 'user_account_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
-  }, UserProfileRow),
+  }, UserAccountRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("add_colleague_by_identity", AddColleagueByIdentityReducer),
+  __reducerSchema("block_company", BlockCompanyReducer),
+  __reducerSchema("create_account", CreateAccountReducer),
   __reducerSchema("create_company", CreateCompanyReducer),
-  __reducerSchema("create_user_profile", CreateUserProfileReducer),
   __reducerSchema("delete_invite_code", DeleteInviteCodeReducer),
+  __reducerSchema("disconnect_company", DisconnectCompanyReducer),
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
   __reducerSchema("join_company", JoinCompanyReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
+  __reducerSchema("request_connection", RequestConnectionReducer),
+  __reducerSchema("respond_to_connection", RespondToConnectionReducer),
   __reducerSchema("transfer_ownership", TransferOwnershipReducer),
+  __reducerSchema("unblock_company", UnblockCompanyReducer),
   __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),
   __reducerSchema("update_company_profile", UpdateCompanyProfileReducer),
+  __reducerSchema("update_profile", UpdateProfileReducer),
   __reducerSchema("update_user_role", UpdateUserRoleReducer),
 );
 

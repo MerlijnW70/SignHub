@@ -8,14 +8,15 @@ interface InviteCodeManagerProps {
 }
 
 export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
+  // Subscribe to all invite codes, filter client-side by company.
+  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
   const [allCodes] = useTable(tables.invite_code)
+  const companyCodes = allCodes.filter(c => c.companyId === companyId)
   const generateCode = useReducer(reducers.generateInviteCode)
   const deleteCode = useReducer(reducers.deleteInviteCode)
 
   const { error, success, loading, run } = useFormAction()
   const [copiedCode, setCopiedCode] = useState('')
-
-  const companyCodes = allCodes.filter(c => c.companyId === companyId)
 
   const handleGenerate = () => {
     run(() => generateCode({ maxUses: 10 }), 'Invite code generated')

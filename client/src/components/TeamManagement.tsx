@@ -2,14 +2,13 @@ import { useState } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
-import { useIdentity } from '../hooks/useIdentity'
-import { toHex } from '../hooks/useIdentity'
+import { useIdentity, toHex } from '../hooks/useIdentity'
 import { useFormAction } from '../hooks/useFormAction'
 import type { Company } from '../module_bindings/types'
 
 interface TeamManagementProps {
   company: Company
-  myRole: string // "Owner" | "Manager" | "Member"
+  myRole: string // "Owner" | "Admin" | "Member" | "Field"
 }
 
 interface ActionTarget {
@@ -19,7 +18,10 @@ interface ActionTarget {
 
 export function TeamManagement({ company, myRole }: TeamManagementProps) {
   const { isMe } = useIdentity()
-  const [allProfiles] = useTable(tables.user_profile)
+  // Subscribe to all accounts, filter client-side by company.
+  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
+  const [allAccounts] = useTable(tables.user_account)
+  const teamMembers = allAccounts.filter(a => a.companyId === company.id)
   const [onlineUsers] = useTable(tables.online_user)
 
   const removeColleague = useReducer(reducers.removeColleague)
@@ -31,11 +33,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
   const [removeTarget, setRemoveTarget] = useState<ActionTarget | null>(null)
 
   const isOwner = myRole === 'Owner'
-  const canManage = myRole !== 'Member'
-
-  const teamMembers = allProfiles.filter(
-    p => p.companyId !== undefined && p.companyId !== null && p.companyId === company.id
-  )
+  const canManage = myRole !== 'Member' && myRole !== 'Field'
 
   const isOnline = (memberIdentity: unknown): boolean => {
     const hex = toHex(memberIdentity)
@@ -46,7 +44,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
     run(
       () => updateUserRole({
         targetIdentity: memberIdentity as Identity,
-        newRole: { tag: newRoleTag } as { tag: 'Manager' } | { tag: 'Member' },
+        newRole: { tag: newRoleTag } as { tag: 'Admin' } | { tag: 'Member' } | { tag: 'Field' },
       }),
       'Role updated'
     )
@@ -72,7 +70,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
 
   const canRemoveMember = (memberRoleTag: string): boolean => {
     if (isOwner) return memberRoleTag !== 'Owner'
-    if (canManage) return memberRoleTag === 'Member'
+    if (canManage) return memberRoleTag === 'Member' || memberRoleTag === 'Field'
     return false
   }
 
@@ -90,7 +88,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
               <div className="member-info">
                 <span className="member-name">
                   <span className={`dot ${isOnline(member.identity) ? 'online' : 'offline'}`} />
-                  {member.fullName}
+                  {member.nickname || member.fullName}
                   {isSelf && <span className="you-badge">you</span>}
                 </span>
                 <span className="member-email">{member.email}</span>
@@ -108,8 +106,9 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
                     onChange={e => handleRoleChange(member.identity, e.target.value)}
                     disabled={loading}
                   >
-                    <option value="Manager">Manager</option>
+                    <option value="Admin">Admin</option>
                     <option value="Member">Member</option>
+                    <option value="Field">Field</option>
                   </select>
                 )}
 
@@ -119,7 +118,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
                     className="btn-transfer"
                     onClick={() => setTransferTarget({
                       identity: member.identity,
-                      name: member.fullName,
+                      name: member.nickname || member.fullName,
                     })}
                     disabled={loading}
                   >
@@ -133,7 +132,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
                     className="btn-remove"
                     onClick={() => setRemoveTarget({
                       identity: member.identity,
-                      name: member.fullName,
+                      name: member.nickname || member.fullName,
                     })}
                     disabled={loading}
                   >
@@ -159,7 +158,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
               <strong>{transferTarget.name}</strong>.
             </p>
             <p className="modal-warning">
-              This means you will lose all Owner privileges and become a Manager.
+              This means you will lose all Owner privileges and become an Admin.
               Only the new owner can reverse this action.
             </p>
             <div className="modal-actions">

@@ -11,6 +11,6 @@ import {
 } from "spacetimedb";
 
 export default {
-  fullName: __t.string(),
-  email: __t.string(),
+  connectionId: __t.u64(),
+  accept: __t.bool(),
 };

@@ -18,6 +18,7 @@ export function CompanySettings({ company }: CompanySettingsProps) {
   const [location, setLocation] = useState(company.location)
   const [bio, setBio] = useState(company.bio)
   const [isPublic, setIsPublic] = useState(company.isPublic)
+  const [kvkNumber, setKvkNumber] = useState(company.kvkNumber)
 
   // Sync form when company data changes from server
   useEffect(() => {
@@ -26,7 +27,8 @@ export function CompanySettings({ company }: CompanySettingsProps) {
     setLocation(company.location)
     setBio(company.bio)
     setIsPublic(company.isPublic)
-  }, [company.name, company.slug, company.location, company.bio, company.isPublic])
+    setKvkNumber(company.kvkNumber)
+  }, [company.name, company.slug, company.location, company.bio, company.isPublic, company.kvkNumber])
 
   const handleProfileSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -37,17 +39,20 @@ export function CompanySettings({ company }: CompanySettingsProps) {
         location: location.trim(),
         bio: bio.trim(),
         isPublic,
+        kvkNumber: kvkNumber.trim(),
       }),
       'Company profile updated'
     )
   }
 
-  // Capabilities form
+  // Subscribe to all capabilities, filter client-side by company.
+  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
   const [allCapabilities] = useTable(tables.capability)
+  const capabilities = allCapabilities.filter(c => c.companyId === company.id)
   const updateCapabilities = useReducer(reducers.updateCapabilities)
   const capAction = useFormAction()
 
-  const cap = allCapabilities.find(c => c.companyId === company.id)
+  const cap = capabilities[0]
 
   const [canInstall, setCanInstall] = useState(false)
   const [hasCnc, setHasCnc] = useState(false)
@@ -99,6 +104,15 @@ export function CompanySettings({ company }: CompanySettingsProps) {
               type="text"
               value={location}
               onChange={e => setLocation(e.target.value)}
+            />
+          </label>
+          <label>
+            KvK Number
+            <input
+              type="text"
+              value={kvkNumber}
+              onChange={e => setKvkNumber(e.target.value)}
+              placeholder="12345678"
             />
           </label>
           <label>

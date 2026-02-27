@@ -9,14 +9,18 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import {
+  ConnectionStatus,
+} from "./types";
+
 
 export default __t.row({
   id: __t.u64().primaryKey(),
-  ownerIdentity: __t.identity().name("owner_identity"),
-  name: __t.string(),
-  slug: __t.string(),
-  location: __t.string(),
-  bio: __t.string(),
-  isPublic: __t.bool().name("is_public"),
-  kvkNumber: __t.string().name("kvk_number"),
+  companyA: __t.u64().name("company_a"),
+  companyB: __t.u64().name("company_b"),
+  get status() {
+    return ConnectionStatus;
+  },
+  requestedBy: __t.identity().name("requested_by"),
+  createdAt: __t.timestamp().name("created_at"),
 });

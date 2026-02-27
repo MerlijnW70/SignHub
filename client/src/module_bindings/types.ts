@@ -27,8 +27,29 @@ export const Company = __t.object("Company", {
   location: __t.string(),
   bio: __t.string(),
   isPublic: __t.bool(),
+  kvkNumber: __t.string(),
 });
 export type Company = __Infer<typeof Company>;
+
+export const Connection = __t.object("Connection", {
+  id: __t.u64(),
+  companyA: __t.u64(),
+  companyB: __t.u64(),
+  get status() {
+    return ConnectionStatus;
+  },
+  requestedBy: __t.identity(),
+  createdAt: __t.timestamp(),
+});
+export type Connection = __Infer<typeof Connection>;
+
+// The tagged union or sum type for the algebraic type `ConnectionStatus`.
+export const ConnectionStatus = __t.enum("ConnectionStatus", {
+  Pending: __t.unit(),
+  Accepted: __t.unit(),
+  Blocked: __t.unit(),
+});
+export type ConnectionStatus = __Infer<typeof ConnectionStatus>;
 
 export const InviteCode = __t.object("InviteCode", {
   code: __t.string(),
@@ -44,22 +65,25 @@ export const OnlineUser = __t.object("OnlineUser", {
 });
 export type OnlineUser = __Infer<typeof OnlineUser>;
 
-export const UserProfile = __t.object("UserProfile", {
+export const UserAccount = __t.object("UserAccount", {
   identity: __t.identity(),
-  companyId: __t.option(__t.u64()),
   fullName: __t.string(),
+  nickname: __t.string(),
   email: __t.string(),
+  companyId: __t.option(__t.u64()),
   get role() {
     return UserRole;
   },
+  createdAt: __t.timestamp(),
 });
-export type UserProfile = __Infer<typeof UserProfile>;
+export type UserAccount = __Infer<typeof UserAccount>;
 
 // The tagged union or sum type for the algebraic type `UserRole`.
 export const UserRole = __t.enum("UserRole", {
   Owner: __t.unit(),
-  Manager: __t.unit(),
+  Admin: __t.unit(),
   Member: __t.unit(),
+  Field: __t.unit(),
 });
 export type UserRole = __Infer<typeof UserRole>;
 
