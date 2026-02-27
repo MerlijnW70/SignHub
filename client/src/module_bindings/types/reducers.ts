@@ -13,8 +13,10 @@ import DeleteInviteCodeReducer from "../delete_invite_code_reducer";
 import GenerateInviteCodeReducer from "../generate_invite_code_reducer";
 import JoinCompanyReducer from "../join_company_reducer";
 import RemoveColleagueReducer from "../remove_colleague_reducer";
+import TransferOwnershipReducer from "../transfer_ownership_reducer";
 import UpdateCapabilitiesReducer from "../update_capabilities_reducer";
 import UpdateCompanyProfileReducer from "../update_company_profile_reducer";
+import UpdateUserRoleReducer from "../update_user_role_reducer";
 
 export type AddColleagueByIdentityParams = __Infer<typeof AddColleagueByIdentityReducer>;
 export type CreateCompanyParams = __Infer<typeof CreateCompanyReducer>;
@@ -23,6 +25,8 @@ export type DeleteInviteCodeParams = __Infer<typeof DeleteInviteCodeReducer>;
 export type GenerateInviteCodeParams = __Infer<typeof GenerateInviteCodeReducer>;
 export type JoinCompanyParams = __Infer<typeof JoinCompanyReducer>;
 export type RemoveColleagueParams = __Infer<typeof RemoveColleagueReducer>;
+export type TransferOwnershipParams = __Infer<typeof TransferOwnershipReducer>;
 export type UpdateCapabilitiesParams = __Infer<typeof UpdateCapabilitiesReducer>;
 export type UpdateCompanyProfileParams = __Infer<typeof UpdateCompanyProfileReducer>;
+export type UpdateUserRoleParams = __Infer<typeof UpdateUserRoleReducer>;
 

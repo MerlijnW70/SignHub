@@ -49,7 +49,17 @@ export const UserProfile = __t.object("UserProfile", {
   companyId: __t.option(__t.u64()),
   fullName: __t.string(),
   email: __t.string(),
-  isAdmin: __t.bool(),
+  get role() {
+    return UserRole;
+  },
 });
 export type UserProfile = __Infer<typeof UserProfile>;
+
+// The tagged union or sum type for the algebraic type `UserRole`.
+export const UserRole = __t.enum("UserRole", {
+  Owner: __t.unit(),
+  Manager: __t.unit(),
+  Member: __t.unit(),
+});
+export type UserRole = __Infer<typeof UserRole>;
 

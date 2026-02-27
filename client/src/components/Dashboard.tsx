@@ -11,6 +11,9 @@ interface DashboardProps {
 }
 
 export function Dashboard({ profile, company }: DashboardProps) {
+  const roleTag = profile.role.tag
+  const canManage = roleTag !== 'Member'
+
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -35,16 +38,18 @@ export function Dashboard({ profile, company }: DashboardProps) {
           </div>
           <div className="info-item">
             <span className="info-label">Role</span>
-            <span className="info-value">{profile.isAdmin ? 'Admin' : 'Member'}</span>
+            <span className="info-value">
+              <span className={`role-badge role-${roleTag.toLowerCase()}`}>{roleTag}</span>
+            </span>
           </div>
         </div>
       </section>
 
-      {profile.isAdmin && <CompanySettings company={company} />}
+      {canManage && <CompanySettings company={company} />}
 
-      <TeamManagement company={company} isAdmin={profile.isAdmin} />
+      <TeamManagement company={company} myRole={roleTag} />
 
-      {profile.isAdmin && <InviteCodeManager companyId={company.id} />}
+      {canManage && <InviteCodeManager companyId={company.id} />}
     </div>
   )
 }

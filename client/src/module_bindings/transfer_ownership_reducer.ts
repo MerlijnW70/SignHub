@@ -9,17 +9,7 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
-import {
-  UserRole,
-} from "./types";
 
-
-export default __t.row({
-  identity: __t.identity().primaryKey(),
-  companyId: __t.option(__t.u64()).name("company_id"),
-  fullName: __t.string().name("full_name"),
-  email: __t.string(),
-  get role() {
-    return UserRole;
-  },
-});
+export default {
+  newOwnerIdentity: __t.identity(),
+};

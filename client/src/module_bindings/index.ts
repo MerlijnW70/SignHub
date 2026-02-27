@@ -41,8 +41,10 @@ import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
 import JoinCompanyReducer from "./join_company_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
+import TransferOwnershipReducer from "./transfer_ownership_reducer";
 import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
 import UpdateCompanyProfileReducer from "./update_company_profile_reducer";
+import UpdateUserRoleReducer from "./update_user_role_reducer";
 
 // Import all procedure arg schemas
 
@@ -127,8 +129,10 @@ const reducersSchema = __reducers(
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
   __reducerSchema("join_company", JoinCompanyReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
+  __reducerSchema("transfer_ownership", TransferOwnershipReducer),
   __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),
   __reducerSchema("update_company_profile", UpdateCompanyProfileReducer),
+  __reducerSchema("update_user_role", UpdateUserRoleReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
