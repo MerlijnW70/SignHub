@@ -1,0 +1,17 @@
+[package]
+name = "new_app"
+version = "0.1.0"
+edition = "2021"
+description = "SpacetimeDB backend module for new-app"
+license = "MIT"
+repository = "https://github.com/placeholder/new-app"
+readme = "README.md"
+keywords = ["spacetimedb", "wasm", "backend"]
+categories = ["database", "wasm"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+spacetimedb = { version = "2.0.2" }
+log = "0.4"

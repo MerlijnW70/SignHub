@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:spacetimedb.com)",
+      "Bash(spacetime version:*)",
+      "Bash(rustc:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(export:*)",
+      "Bash(curl:*)",
+      "Bash(rustup show:*)",
+      "Bash(spacetime:*)",
+      "Bash(rustup target:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(du:*)",
+      "Bash(wasm-opt:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Bash(npm install:*)",
+      "Bash(cp:*)",
+      "Bash(rm:*)",
+      "Bash(npm search:*)",
+      "Bash(mkdir:*)",
+      "Bash(where wasm-opt:*)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
