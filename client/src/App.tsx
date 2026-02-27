@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTable } from 'spacetimedb/react'
 import { tables } from './module_bindings'
 import { useIdentity } from './hooks/useIdentity'
+import { toHex } from './hooks/useIdentity'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { SignUpForm } from './components/SignUpForm'
 import { CreateCompanyForm } from './components/CreateCompanyForm'
@@ -10,10 +11,11 @@ import { Dashboard } from './components/Dashboard'
 import './App.css'
 
 function App() {
-  const { isActive, identity } = useIdentity()
+  const { isActive, identity, identityHex } = useIdentity()
   const [profiles] = useTable(tables.user_profile)
   const [companies] = useTable(tables.company)
   const [companyMode, setCompanyMode] = useState<'choose' | 'create' | 'join'>('choose')
+  const [companyTimeout, setCompanyTimeout] = useState(false)
 
   // 1. Waiting for connection
   if (!isActive || !identity) {
@@ -25,14 +27,7 @@ function App() {
   }
 
   // 2. Find current user's profile
-  const myProfile = profiles.find(p => {
-    const pHex =
-      typeof p.identity === 'object' && p.identity !== null && 'toHexString' in p.identity
-        ? (p.identity as { toHexString: () => string }).toHexString()
-        : String(p.identity)
-    const myHex = identity.toHexString?.() ?? identity.toString?.() ?? ''
-    return pHex === myHex
-  })
+  const myProfile = profiles.find(p => toHex(p.identity) === identityHex)
 
   // 3. No profile → sign up
   if (!myProfile) {
@@ -75,11 +70,24 @@ function App() {
 
   // 5. Find the company
   const myCompany = companies.find(c => c.id === myProfile.companyId)
+
+  // Company loading timeout — show error after 10 seconds
+  useEffect(() => {
+    if (myProfile?.companyId !== undefined && myProfile?.companyId !== null && !myCompany) {
+      const timer = setTimeout(() => setCompanyTimeout(true), 10000)
+      return () => clearTimeout(timer)
+    }
+    setCompanyTimeout(false)
+  }, [myProfile?.companyId, myCompany])
+
   if (!myCompany) {
     return (
       <div className="app center">
         <ConnectionStatus />
-        <p>Loading company...</p>
+        {companyTimeout
+          ? <p className="error">Could not load company data. Try reloading the page.</p>
+          : <p>Loading company...</p>
+        }
       </div>
     )
   }

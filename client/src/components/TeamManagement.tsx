@@ -3,6 +3,7 @@ import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
 import { useIdentity } from '../hooks/useIdentity'
+import { toHex } from '../hooks/useIdentity'
 import { useFormAction } from '../hooks/useFormAction'
 import type { Company } from '../module_bindings/types'
 
@@ -11,7 +12,7 @@ interface TeamManagementProps {
   myRole: string // "Owner" | "Manager" | "Member"
 }
 
-interface TransferTarget {
+interface ActionTarget {
   identity: unknown
   name: string
 }
@@ -26,7 +27,8 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
   const transferOwnership = useReducer(reducers.transferOwnership)
   const { error, success, loading, run } = useFormAction()
 
-  const [transferTarget, setTransferTarget] = useState<TransferTarget | null>(null)
+  const [transferTarget, setTransferTarget] = useState<ActionTarget | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<ActionTarget | null>(null)
 
   const isOwner = myRole === 'Owner'
   const canManage = myRole !== 'Member'
@@ -36,24 +38,8 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
   )
 
   const isOnline = (memberIdentity: unknown): boolean => {
-    const hex =
-      typeof memberIdentity === 'object' && memberIdentity !== null && 'toHexString' in memberIdentity
-        ? (memberIdentity as { toHexString: () => string }).toHexString()
-        : String(memberIdentity)
-    return onlineUsers.some(u => {
-      const uHex =
-        typeof u.identity === 'object' && u.identity !== null && 'toHexString' in u.identity
-          ? (u.identity as { toHexString: () => string }).toHexString()
-          : String(u.identity)
-      return uHex === hex && u.online
-    })
-  }
-
-  const handleRemove = (memberIdentity: unknown) => {
-    run(
-      () => removeColleague({ colleagueIdentity: memberIdentity as Identity }),
-      'Colleague removed'
-    )
+    const hex = toHex(memberIdentity)
+    return onlineUsers.some(u => toHex(u.identity) === hex && u.online)
   }
 
   const handleRoleChange = (memberIdentity: unknown, newRoleTag: string) => {
@@ -75,6 +61,15 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
     setTransferTarget(null)
   }
 
+  const handleRemoveConfirm = () => {
+    if (!removeTarget) return
+    run(
+      () => removeColleague({ colleagueIdentity: removeTarget.identity as Identity }),
+      'Colleague removed'
+    )
+    setRemoveTarget(null)
+  }
+
   const canRemoveMember = (memberRoleTag: string): boolean => {
     if (isOwner) return memberRoleTag !== 'Owner'
     if (canManage) return memberRoleTag === 'Member'
@@ -87,7 +82,7 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
 
       <ul className="team-list">
         {teamMembers.map(member => {
-          const memberRoleTag = member.role.tag
+          const memberRoleTag = member.role?.tag ?? 'Member'
           const isSelf = isMe(member.identity)
 
           return (
@@ -136,7 +131,10 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
                 {canManage && !isSelf && canRemoveMember(memberRoleTag) && (
                   <button
                     className="btn-remove"
-                    onClick={() => handleRemove(member.identity)}
+                    onClick={() => setRemoveTarget({
+                      identity: member.identity,
+                      name: member.fullName,
+                    })}
                     disabled={loading}
                   >
                     Remove
@@ -177,6 +175,37 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
                 disabled={loading}
               >
                 {loading ? 'Transferring...' : 'Confirm Transfer'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Remove colleague confirmation modal */}
+      {removeTarget && (
+        <div className="modal-overlay" onClick={() => setRemoveTarget(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3>Remove Team Member</h3>
+            <p className="modal-warning">
+              Are you sure you want to remove <strong>{removeTarget.name}</strong> from{' '}
+              <strong>{company.name}</strong>?
+            </p>
+            <p className="modal-warning">
+              They will lose access to the company and will need a new invite code to rejoin.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="btn-cancel"
+                onClick={() => setRemoveTarget(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-danger"
+                onClick={handleRemoveConfirm}
+                disabled={loading}
+              >
+                {loading ? 'Removing...' : 'Confirm Remove'}
               </button>
             </div>
           </div>

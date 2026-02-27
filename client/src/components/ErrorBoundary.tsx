@@ -27,8 +27,11 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="error-boundary">
           <h1>Something went wrong</h1>
-          <p>An unexpected error occurred. Try reloading the page.</p>
-          <button onClick={() => window.location.reload()}>Reload</button>
+          <p>An unexpected error occurred.</p>
+          <div className="error-boundary-actions">
+            <button onClick={() => this.setState({ hasError: false })}>Try Again</button>
+            <button onClick={() => window.location.reload()}>Reload Page</button>
+          </div>
         </div>
       )
     }

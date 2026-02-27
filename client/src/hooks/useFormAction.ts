@@ -48,8 +48,18 @@ export function useFormAction(): FormAction {
         successTimer.current = setTimeout(() => setSuccess(''), 3000)
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setError(msg)
+      let msg: string
+      if (err instanceof Error) {
+        msg = err.message
+      } else if (typeof err === 'object' && err !== null && 'message' in err) {
+        msg = String((err as { message: unknown }).message)
+      } else {
+        msg = String(err)
+      }
+      // Strip SpacetimeDB wrapper prefixes if present
+      msg = msg.replace(/^(ReducerError|Error): /i, '')
+      setError(msg || 'An unexpected error occurred')
+      console.error('Action failed:', err)
       errorTimer.current = setTimeout(() => setError(''), 5000)
     } finally {
       setLoading(false)

@@ -26,7 +26,17 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
   }
 
   const handleCopy = async (code: string) => {
-    await navigator.clipboard.writeText(code)
+    try {
+      await navigator.clipboard.writeText(code)
+    } catch {
+      // Fallback for insecure contexts (e.g. HTTP)
+      const input = document.createElement('input')
+      input.value = code
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+    }
     setCopiedCode(code)
     setTimeout(() => setCopiedCode(''), 2000)
   }

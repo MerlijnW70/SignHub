@@ -18,6 +18,9 @@ const builder = DbConnection.builder()
   .onDisconnect(() => {
     console.warn('SpacetimeDB disconnected — will auto-reconnect')
   })
+  .onConnectError((_conn, err) => {
+    console.error('SpacetimeDB connection error:', err)
+  })
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

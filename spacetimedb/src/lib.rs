@@ -99,14 +99,18 @@ fn require_role_at_least(
         .user_profile()
         .identity()
         .find(ctx.sender())
-        .ok_or("Profile not found")?;
+        .ok_or("Create a profile first")?;
 
     let company_id = profile
         .company_id
-        .ok_or("You don't belong to a company")?;
+        .ok_or("You must belong to a company first")?;
 
     if role_level(&profile.role) < role_level(&min_role) {
-        return Err(format!("Requires at least {:?} role", min_role));
+        return Err(match min_role {
+            UserRole::Owner => "Only the owner can do this".to_string(),
+            UserRole::Manager => "Only managers and owners can do this".to_string(),
+            UserRole::Member => "You do not have permission".to_string(),
+        });
     }
 
     Ok((profile, company_id))
@@ -389,7 +393,7 @@ pub fn add_colleague_by_identity(
         .ok_or("Colleague profile not found")?;
 
     if colleague.company_id.is_some() {
-        return Err("Colleague already belongs to a company".to_string());
+        return Err("This user already belongs to a company".to_string());
     }
 
     ctx.db.user_profile().identity().update(UserProfile {
@@ -431,7 +435,7 @@ pub fn remove_colleague(
 
     // Hierarchy: cannot remove someone with equal or higher role
     if role_level(&colleague.role) >= role_level(&caller.role) {
-        return Err("Cannot remove someone with equal or higher role".to_string());
+        return Err("You can only remove members with a lower role than yours".to_string());
     }
 
     ctx.db.user_profile().identity().update(UserProfile {

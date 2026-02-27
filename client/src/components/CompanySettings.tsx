@@ -62,7 +62,7 @@ export function CompanySettings({ company }: CompanySettingsProps) {
       setHasLargeFormat(cap.hasLargeFormat)
       setHasBucketTruck(cap.hasBucketTruck)
     }
-  }, [cap?.canInstall, cap?.hasCnc, cap?.hasLargeFormat, cap?.hasBucketTruck])
+  }, [cap?.companyId, cap?.canInstall, cap?.hasCnc, cap?.hasLargeFormat, cap?.hasBucketTruck])
 
   const handleCapSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -129,6 +129,9 @@ export function CompanySettings({ company }: CompanySettingsProps) {
 
       <section className="dashboard-section">
         <h2>Capabilities</h2>
+        {!cap ? (
+          <p className="empty-state">Loading capabilities...</p>
+        ) : (
         <form className="settings-form" onSubmit={handleCapSubmit}>
           <div className="capabilities-grid">
             <label className="checkbox-label">
@@ -172,6 +175,7 @@ export function CompanySettings({ company }: CompanySettingsProps) {
             {capAction.success && <span className="success">{capAction.success}</span>}
           </div>
         </form>
+        )}
       </section>
     </>
   )
