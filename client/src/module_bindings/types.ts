@@ -30,6 +30,14 @@ export const Company = __t.object("Company", {
 });
 export type Company = __Infer<typeof Company>;
 
+export const InviteCode = __t.object("InviteCode", {
+  code: __t.string(),
+  companyId: __t.u64(),
+  createdBy: __t.identity(),
+  usesRemaining: __t.u32(),
+});
+export type InviteCode = __Infer<typeof InviteCode>;
+
 export const OnlineUser = __t.object("OnlineUser", {
   identity: __t.identity(),
   online: __t.bool(),

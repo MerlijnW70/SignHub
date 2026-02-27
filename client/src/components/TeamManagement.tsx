@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
@@ -15,10 +15,8 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
   const [allProfiles] = useTable(tables.user_profile)
   const [onlineUsers] = useTable(tables.online_user)
 
-  const addColleague = useReducer(reducers.addColleagueByIdentity)
   const removeColleague = useReducer(reducers.removeColleague)
 
-  const [identityInput, setIdentityInput] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -38,23 +36,6 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
           : String(u.identity)
       return uHex === hex && u.online
     })
-  }
-
-  const handleAdd = async (e: FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setSuccess('')
-    const trimmed = identityInput.trim()
-    if (!trimmed) return
-
-    try {
-      const identity = Identity.fromString(trimmed)
-      await addColleague({ colleagueIdentity: identity })
-      setSuccess('Colleague added')
-      setIdentityInput('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
   }
 
   const handleRemove = async (memberIdentity: unknown) => {
@@ -97,20 +78,6 @@ export function TeamManagement({ company, isAdmin }: TeamManagementProps) {
           </li>
         ))}
       </ul>
-
-      {isAdmin && (
-        <form className="add-colleague-form" onSubmit={handleAdd}>
-          <input
-            type="text"
-            placeholder="Paste colleague's identity hex..."
-            value={identityInput}
-            onChange={e => setIdentityInput(e.target.value)}
-          />
-          <button type="submit" disabled={!identityInput.trim()}>
-            Add
-          </button>
-        </form>
-      )}
 
       {error && <p className="error">{error}</p>}
       {success && <p className="success">{success}</p>}

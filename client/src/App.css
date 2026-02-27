@@ -255,63 +255,108 @@
   color: #fff;
 }
 
-/* Add colleague form */
-.add-colleague-form {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: 1rem;
-}
-
-.add-colleague-form input {
-  flex: 1;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #333;
-  border-radius: 6px;
-  font-size: 0.85rem;
-  background: #1a1a1a;
-  color: #fff;
-  font-family: monospace;
-}
-
-.add-colleague-form input:focus {
-  outline: none;
-  border-color: #646cff;
-}
-
-.add-colleague-form button {
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 6px;
-  background: #646cff;
-  color: #fff;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.add-colleague-form button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .success {
   color: #22c55e;
   font-size: 0.85rem;
   margin: 0.5rem 0 0;
 }
 
-/* Identity display */
-.identity-value {
+/* Choice buttons (join/create) */
+.choice-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.btn-choice {
+  padding: 0.75rem 1.5rem;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.btn-choice:hover {
+  border-color: #646cff;
+}
+
+.btn-choice.primary {
+  background: #646cff;
+  border-color: #646cff;
+}
+
+.btn-choice.primary:hover {
+  background: #535bf2;
+}
+
+/* Back / link button */
+.btn-link {
+  margin-top: 1.5rem;
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.btn-link:hover {
+  color: #aaa;
+}
+
+/* Invite code input */
+.invite-code-input {
+  text-align: center;
+  font-family: monospace;
+  font-size: 1.3rem !important;
+  letter-spacing: 0.15em;
+}
+
+/* Invite code list */
+.invite-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.invite-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.invite-item:last-child {
+  border-bottom: none;
+}
+
+.invite-code-display {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.identity-hex {
-  font-size: 0.8rem;
-  color: #888;
+.invite-code {
+  font-size: 1rem;
+  color: #fff;
   background: #1a1a1a;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  letter-spacing: 0.1em;
+}
+
+.invite-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.invite-uses {
+  font-size: 0.8rem;
+  color: #666;
 }
 
 .btn-copy {
@@ -327,4 +372,30 @@
 .btn-copy:hover {
   background: #333;
   color: #ccc;
+}
+
+.btn-generate {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.btn-generate:hover {
+  border-color: #646cff;
+}
+
+.btn-generate:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.empty-state {
+  color: #555;
+  font-size: 0.85rem;
+  margin: 0;
 }

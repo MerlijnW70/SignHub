@@ -1,7 +1,6 @@
-import { useState } from 'react'
 import { ConnectionStatus } from './ConnectionStatus'
 import { TeamManagement } from './TeamManagement'
-import { useIdentity } from '../hooks/useIdentity'
+import { InviteCodeManager } from './InviteCodeManager'
 import type { UserProfile } from '../module_bindings/types'
 import type { Company } from '../module_bindings/types'
 
@@ -11,15 +10,6 @@ interface DashboardProps {
 }
 
 export function Dashboard({ profile, company }: DashboardProps) {
-  const { identityHex } = useIdentity()
-  const [copied, setCopied] = useState(false)
-
-  const copyIdentity = async () => {
-    await navigator.clipboard.writeText(identityHex)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -46,19 +36,12 @@ export function Dashboard({ profile, company }: DashboardProps) {
             <span className="info-label">Role</span>
             <span className="info-value">{profile.isAdmin ? 'Admin' : 'Member'}</span>
           </div>
-          <div className="info-item">
-            <span className="info-label">Your Identity</span>
-            <span className="info-value identity-value">
-              <code className="identity-hex">{identityHex.slice(0, 12)}...{identityHex.slice(-8)}</code>
-              <button className="btn-copy" onClick={copyIdentity}>
-                {copied ? 'Copied' : 'Copy'}
-              </button>
-            </span>
-          </div>
         </div>
       </section>
 
       <TeamManagement company={company} isAdmin={profile.isAdmin} />
+
+      {profile.isAdmin && <InviteCodeManager companyId={company.id} />}
     </div>
   )
 }

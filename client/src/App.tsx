@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { useTable } from 'spacetimedb/react'
 import { tables } from './module_bindings'
 import { useIdentity } from './hooks/useIdentity'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { SignUpForm } from './components/SignUpForm'
 import { CreateCompanyForm } from './components/CreateCompanyForm'
+import { JoinCompanyForm } from './components/JoinCompanyForm'
 import { Dashboard } from './components/Dashboard'
 import './App.css'
 
@@ -11,6 +13,7 @@ function App() {
   const { isActive, identity } = useIdentity()
   const [profiles] = useTable(tables.user_profile)
   const [companies] = useTable(tables.company)
+  const [companyMode, setCompanyMode] = useState<'choose' | 'create' | 'join'>('choose')
 
   // 1. Waiting for connection
   if (!isActive || !identity) {
@@ -41,12 +44,31 @@ function App() {
     )
   }
 
-  // 4. No company → create one
+  // 4. No company → choose: create or join
   if (myProfile.companyId === undefined || myProfile.companyId === null) {
     return (
       <div className="app center">
         <ConnectionStatus />
-        <CreateCompanyForm />
+        {companyMode === 'choose' && (
+          <div className="form-container">
+            <h1>Join or Create a Company</h1>
+            <p className="subtitle">Get started with your sign shop</p>
+            <div className="choice-buttons">
+              <button className="btn-choice" onClick={() => setCompanyMode('join')}>
+                I have an invite code
+              </button>
+              <button className="btn-choice primary" onClick={() => setCompanyMode('create')}>
+                Create a new company
+              </button>
+            </div>
+          </div>
+        )}
+        {companyMode === 'create' && (
+          <CreateCompanyForm onBack={() => setCompanyMode('choose')} />
+        )}
+        {companyMode === 'join' && (
+          <JoinCompanyForm onBack={() => setCompanyMode('choose')} />
+        )}
       </div>
     )
   }

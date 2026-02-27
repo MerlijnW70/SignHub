@@ -1,3 +1,4 @@
+use spacetimedb::rand::RngCore;
 use spacetimedb::{Identity, ReducerContext, Table};
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,17 @@ pub struct Company {
     pub location: String,
     pub bio: String,
     pub is_public: bool,
+}
+
+/// Invite codes that allow users to join a company without admin hex-pasting.
+#[spacetimedb::table(accessor = invite_code, public)]
+pub struct InviteCode {
+    #[primary_key]
+    #[unique]
+    pub code: String,
+    pub company_id: u64,
+    pub created_by: Identity,
+    pub uses_remaining: u32,
 }
 
 /// Equipment and service capabilities for a company (1:1 with Company).
@@ -192,6 +204,134 @@ pub fn create_company(
         ..profile
     });
 
+    Ok(())
+}
+
+/// Admin generates an invite code for their company.
+///
+/// # Errors
+/// Returns an error if the caller is not an admin or doesn't belong to a
+/// company.
+#[spacetimedb::reducer]
+pub fn generate_invite_code(ctx: &ReducerContext, max_uses: u32) -> Result<(), String> {
+    let profile = ctx
+        .db
+        .user_profile()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Profile not found")?;
+
+    if !profile.is_admin {
+        return Err("Only admins can generate invite codes".to_string());
+    }
+    let company_id = profile.company_id.ok_or("You don't belong to a company")?;
+
+    // Build a short readable code from the deterministic RNG
+    let charset = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I ambiguity
+    let mut code = String::with_capacity(8);
+    let mut rng = ctx.rng();
+    for i in 0..8 {
+        if i == 4 {
+            code.push('-');
+        }
+        #[allow(clippy::cast_possible_truncation)] // Modulo charset.len() keeps value small
+        let idx = (rng.next_u64() as usize) % charset.len();
+        code.push(charset[idx] as char);
+    }
+
+    ctx.db.invite_code().insert(InviteCode {
+        code,
+        company_id,
+        created_by: ctx.sender(),
+        uses_remaining: if max_uses == 0 { 1 } else { max_uses },
+    });
+
+    Ok(())
+}
+
+/// User joins a company using an invite code.
+///
+/// # Errors
+/// Returns an error if the caller has no profile, already belongs to a
+/// company, or the code is invalid/exhausted.
+#[spacetimedb::reducer]
+#[allow(clippy::needless_pass_by_value)]
+pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
+    let code = code.trim().to_uppercase();
+
+    let profile = ctx
+        .db
+        .user_profile()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Create a profile first")?;
+
+    if profile.company_id.is_some() {
+        return Err("You already belong to a company".to_string());
+    }
+
+    let invite = ctx
+        .db
+        .invite_code()
+        .code()
+        .find(&code)
+        .ok_or("Invalid invite code")?;
+
+    if invite.uses_remaining == 0 {
+        return Err("Invite code has been fully used".to_string());
+    }
+
+    // Link user to the company
+    ctx.db.user_profile().identity().update(UserProfile {
+        company_id: Some(invite.company_id),
+        ..profile
+    });
+
+    // Decrement uses (or delete if last use)
+    if invite.uses_remaining <= 1 {
+        ctx.db.invite_code().code().delete(&code);
+    } else {
+        ctx.db.invite_code().code().update(InviteCode {
+            uses_remaining: invite.uses_remaining - 1,
+            ..invite
+        });
+    }
+
+    Ok(())
+}
+
+/// Admin deletes an invite code.
+///
+/// # Errors
+/// Returns an error if the caller is not an admin or the code doesn't belong
+/// to their company.
+#[spacetimedb::reducer]
+#[allow(clippy::needless_pass_by_value)]
+pub fn delete_invite_code(ctx: &ReducerContext, code: String) -> Result<(), String> {
+    let profile = ctx
+        .db
+        .user_profile()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Profile not found")?;
+
+    if !profile.is_admin {
+        return Err("Only admins can delete invite codes".to_string());
+    }
+    let company_id = profile.company_id.ok_or("You don't belong to a company")?;
+
+    let invite = ctx
+        .db
+        .invite_code()
+        .code()
+        .find(&code)
+        .ok_or("Invite code not found")?;
+
+    if invite.company_id != company_id {
+        return Err("Invite code belongs to a different company".to_string());
+    }
+
+    ctx.db.invite_code().code().delete(&code);
     Ok(())
 }
 

@@ -10,7 +10,7 @@ function toSlug(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-export function CreateCompanyForm() {
+export function CreateCompanyForm({ onBack }: { onBack: () => void }) {
   const createCompany = useReducer(reducers.createCompany)
 
   const [name, setName] = useState('')
@@ -90,6 +90,10 @@ export function CreateCompanyForm() {
           Create Company
         </button>
       </form>
+
+      <button className="btn-link" onClick={onBack}>
+        Or join an existing company with an invite code
+      </button>
     </div>
   )
 }

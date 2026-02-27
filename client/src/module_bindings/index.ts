@@ -37,6 +37,9 @@ import {
 import AddColleagueByIdentityReducer from "./add_colleague_by_identity_reducer";
 import CreateCompanyReducer from "./create_company_reducer";
 import CreateUserProfileReducer from "./create_user_profile_reducer";
+import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
+import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
+import JoinCompanyReducer from "./join_company_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
 import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
 import UpdateCompanyProfileReducer from "./update_company_profile_reducer";
@@ -46,6 +49,7 @@ import UpdateCompanyProfileReducer from "./update_company_profile_reducer";
 // Import all table schema definitions
 import CapabilityRow from "./capability_table";
 import CompanyRow from "./company_table";
+import InviteCodeRow from "./invite_code_table";
 import OnlineUserRow from "./online_user_table";
 import UserProfileRow from "./user_profile_table";
 
@@ -79,6 +83,17 @@ const tablesSchema = __schema({
       { name: 'company_slug_key', constraint: 'unique', columns: ['slug'] },
     ],
   }, CompanyRow),
+  invite_code: __table({
+    name: 'invite_code',
+    indexes: [
+      { name: 'code', algorithm: 'btree', columns: [
+        'code',
+      ] },
+    ],
+    constraints: [
+      { name: 'invite_code_code_key', constraint: 'unique', columns: ['code'] },
+    ],
+  }, InviteCodeRow),
   online_user: __table({
     name: 'online_user',
     indexes: [
@@ -108,6 +123,9 @@ const reducersSchema = __reducers(
   __reducerSchema("add_colleague_by_identity", AddColleagueByIdentityReducer),
   __reducerSchema("create_company", CreateCompanyReducer),
   __reducerSchema("create_user_profile", CreateUserProfileReducer),
+  __reducerSchema("delete_invite_code", DeleteInviteCodeReducer),
+  __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
+  __reducerSchema("join_company", JoinCompanyReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
   __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),
   __reducerSchema("update_company_profile", UpdateCompanyProfileReducer),
