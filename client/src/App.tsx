@@ -3,11 +3,13 @@ import { useTable, useReducer } from 'spacetimedb/react'
 import { tables, reducers } from './module_bindings'
 import { useIdentity, toHex } from './hooks/useIdentity'
 import { useFormAction } from './hooks/useFormAction'
+import { useFilteredTable } from './hooks/useFilteredTable'
 import { ConnectionStatus } from './components/ConnectionStatus'
 import { SignUpForm } from './components/SignUpForm'
 import { CreateCompanyForm } from './components/CreateCompanyForm'
 import { JoinCompanyForm } from './components/JoinCompanyForm'
 import { Dashboard } from './components/Dashboard'
+import type { Company } from './module_bindings/types'
 import './App.css'
 
 function App() {
@@ -35,9 +37,11 @@ function AuthenticatedApp() {
   )
   const myAccount = accounts.find(a => toHex(a.identity) === identityHex)
 
-  // Subscribe to all companies (single subscription handles both directory
-  // and own-company lookup; .where() on renamed columns is broken in SDK)
-  const [allCompanies] = useTable(tables.company)
+  // Server-side filtered: own company + public directory
+  const companySql = myAccount?.companyId != null
+    ? `SELECT * FROM company WHERE id = ${myAccount.companyId} OR is_public = true`
+    : `SELECT * FROM company WHERE is_public = true`
+  const [allCompanies] = useFilteredTable<Company>(companySql, 'company')
 
   const myCompany = myAccount?.companyId != null
     ? allCompanies.find(c => c.id === myAccount.companyId)

@@ -1,17 +1,20 @@
 import { useState } from 'react'
-import { useTable, useReducer } from 'spacetimedb/react'
-import { tables, reducers } from '../module_bindings'
+import { useReducer } from 'spacetimedb/react'
+import { reducers } from '../module_bindings'
 import { useFormAction } from '../hooks/useFormAction'
+import { useFilteredTable } from '../hooks/useFilteredTable'
+import type { InviteCode } from '../module_bindings/types'
 
 interface InviteCodeManagerProps {
   companyId: bigint
 }
 
 export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
-  // Subscribe to all invite codes, filter client-side by company.
-  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
-  const [allCodes] = useTable(tables.invite_code)
-  const companyCodes = allCodes.filter(c => c.companyId === companyId)
+  // Server-side filtered: only our company's invite codes
+  const [companyCodes] = useFilteredTable<InviteCode>(
+    `SELECT * FROM invite_code WHERE company_id = ${companyId}`,
+    'invite_code'
+  )
   const generateCode = useReducer(reducers.generateInviteCode)
   const deleteCode = useReducer(reducers.deleteInviteCode)
 

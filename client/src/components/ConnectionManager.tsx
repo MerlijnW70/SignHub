@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { useTable, useReducer } from 'spacetimedb/react'
-import { tables, reducers } from '../module_bindings'
+import { useReducer } from 'spacetimedb/react'
+import { reducers } from '../module_bindings'
 import { useIdentity, toHex } from '../hooks/useIdentity'
 import { useFormAction } from '../hooks/useFormAction'
-import type { Company } from '../module_bindings/types'
+import { useFilteredTable } from '../hooks/useFilteredTable'
+import type { Company, Connection, ConnectionChat } from '../module_bindings/types'
 
 interface ConnectionManagerProps {
   company: Company
@@ -12,18 +13,24 @@ interface ConnectionManagerProps {
 export function ConnectionManager({ company }: ConnectionManagerProps) {
   const { identityHex } = useIdentity()
 
-  // Subscribe to all connections, filter client-side by company.
-  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
-  const [allConnections] = useTable(tables.company_connection)
-  const connections = allConnections.filter(
-    c => c.companyA === company.id || c.companyB === company.id
+  // Server-side filtered subscriptions (raw SQL with correct DB column names)
+  const [connections] = useFilteredTable<Connection>(
+    `SELECT * FROM company_connection WHERE company_a = ${company.id} OR company_b = ${company.id}`,
+    'company_connection'
   )
-
-  // Subscribe to all companies, accounts, and chat messages
-  const [allCompanies] = useTable(tables.company)
+  const [allCompanies] = useFilteredTable<Company>(
+    `SELECT * FROM company WHERE id = ${company.id} OR is_public = true`,
+    'company'
+  )
   const publicCompanies = allCompanies.filter(c => c.isPublic)
-  const [allAccounts] = useTable(tables.user_account)
-  const [allChats] = useTable(tables.connection_chat)
+  const [allAccounts] = useFilteredTable(
+    `SELECT * FROM user_account WHERE company_id = ${company.id}`,
+    'user_account'
+  )
+  const [allChats] = useFilteredTable<ConnectionChat>(
+    `SELECT * FROM connection_chat`,
+    'connection_chat'
+  )
 
   const requestConnection = useReducer(reducers.requestConnection)
   const cancelRequest = useReducer(reducers.cancelRequest)

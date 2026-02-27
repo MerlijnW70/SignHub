@@ -1030,6 +1030,12 @@ pub fn block_company(
         return Err("Cannot block your own company".to_string());
     }
 
+    ctx.db
+        .company()
+        .id()
+        .find(target_company_id)
+        .ok_or("Target company not found")?;
+
     if let Some(conn) = find_connection(ctx, my_company_id, target_company_id) {
         if conn.status == ConnectionStatus::Blocked {
             // Already blocked — keep original blocker, silently succeed

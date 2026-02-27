@@ -4,7 +4,8 @@ import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
 import { useIdentity, toHex } from '../hooks/useIdentity'
 import { useFormAction } from '../hooks/useFormAction'
-import type { Company } from '../module_bindings/types'
+import { useFilteredTable } from '../hooks/useFilteredTable'
+import type { Company, UserAccount } from '../module_bindings/types'
 
 interface TeamManagementProps {
   company: Company
@@ -18,9 +19,11 @@ interface ActionTarget {
 
 export function TeamManagement({ company, myRole }: TeamManagementProps) {
   const { isMe } = useIdentity()
-  // Subscribe to all accounts, filter client-side by company.
-  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
-  const [allAccounts] = useTable(tables.user_account)
+  // Server-side filtered: only team members in our company
+  const [allAccounts] = useFilteredTable<UserAccount>(
+    `SELECT * FROM user_account WHERE company_id = ${company.id}`,
+    'user_account'
+  )
   const teamMembers = allAccounts.filter(a => a.companyId === company.id)
   const [onlineUsers] = useTable(tables.online_user)
 

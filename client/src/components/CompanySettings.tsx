@@ -1,9 +1,10 @@
 import { useState, useEffect, type FormEvent } from 'react'
-import { useTable, useReducer } from 'spacetimedb/react'
-import { tables, reducers } from '../module_bindings'
+import { useReducer } from 'spacetimedb/react'
+import { reducers } from '../module_bindings'
 import { useFormAction } from '../hooks/useFormAction'
 import { toHex } from '../hooks/useIdentity'
-import type { Company } from '../module_bindings/types'
+import { useFilteredTable } from '../hooks/useFilteredTable'
+import type { Company, Capability, Connection, UserAccount } from '../module_bindings/types'
 
 interface CompanySettingsProps {
   company: Company
@@ -46,10 +47,11 @@ export function CompanySettings({ company }: CompanySettingsProps) {
     )
   }
 
-  // Subscribe to all capabilities, filter client-side by company.
-  // (SDK bug: .where() uses JS property names in SQL instead of DB column names)
-  const [allCapabilities] = useTable(tables.capability)
-  const capabilities = allCapabilities.filter(c => c.companyId === company.id)
+  // Server-side filtered: only our company's capabilities
+  const [capabilities] = useFilteredTable<Capability>(
+    `SELECT * FROM capability WHERE company_id = ${company.id}`,
+    'capability'
+  )
   const updateCapabilities = useReducer(reducers.updateCapabilities)
   const capAction = useFormAction()
 
@@ -78,10 +80,19 @@ export function CompanySettings({ company }: CompanySettingsProps) {
     )
   }
 
-  // Blocked companies — filter connections where our company performed the block
-  const [allConnections] = useTable(tables.company_connection)
-  const [allCompanies] = useTable(tables.company)
-  const [allAccounts] = useTable(tables.user_account)
+  // Server-side filtered: connections, companies, and accounts for our company
+  const [allConnections] = useFilteredTable<Connection>(
+    `SELECT * FROM company_connection WHERE company_a = ${company.id} OR company_b = ${company.id}`,
+    'company_connection'
+  )
+  const [allCompanies] = useFilteredTable<Company>(
+    `SELECT * FROM company WHERE id = ${company.id} OR is_public = true`,
+    'company'
+  )
+  const [allAccounts] = useFilteredTable<UserAccount>(
+    `SELECT * FROM user_account WHERE company_id = ${company.id}`,
+    'user_account'
+  )
   const unblockCompany = useReducer(reducers.unblockCompany)
   const blockAction = useFormAction()
 
