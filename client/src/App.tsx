@@ -17,6 +17,21 @@ function App() {
   const [companyMode, setCompanyMode] = useState<'choose' | 'create' | 'join'>('choose')
   const [companyTimeout, setCompanyTimeout] = useState(false)
 
+  // Derive values needed by hooks (hooks must be called before any early return)
+  const myProfile = profiles.find(p => toHex(p.identity) === identityHex)
+  const myCompany = myProfile?.companyId != null
+    ? companies.find(c => c.id === myProfile.companyId)
+    : undefined
+
+  // Company loading timeout — show error after 10 seconds
+  useEffect(() => {
+    if (myProfile?.companyId != null && !myCompany) {
+      const timer = setTimeout(() => setCompanyTimeout(true), 10000)
+      return () => clearTimeout(timer)
+    }
+    setCompanyTimeout(false)
+  }, [myProfile?.companyId, myCompany])
+
   // 1. Waiting for connection
   if (!isActive || !identity) {
     return (
@@ -26,10 +41,7 @@ function App() {
     )
   }
 
-  // 2. Find current user's profile
-  const myProfile = profiles.find(p => toHex(p.identity) === identityHex)
-
-  // 3. No profile → sign up
+  // 2. No profile → sign up
   if (!myProfile) {
     return (
       <div className="app center">
@@ -39,7 +51,7 @@ function App() {
     )
   }
 
-  // 4. No company → choose: create or join
+  // 3. No company → choose: create or join
   if (myProfile.companyId === undefined || myProfile.companyId === null) {
     return (
       <div className="app center">
@@ -68,18 +80,7 @@ function App() {
     )
   }
 
-  // 5. Find the company
-  const myCompany = companies.find(c => c.id === myProfile.companyId)
-
-  // Company loading timeout — show error after 10 seconds
-  useEffect(() => {
-    if (myProfile?.companyId !== undefined && myProfile?.companyId !== null && !myCompany) {
-      const timer = setTimeout(() => setCompanyTimeout(true), 10000)
-      return () => clearTimeout(timer)
-    }
-    setCompanyTimeout(false)
-  }, [myProfile?.companyId, myCompany])
-
+  // 4. Company not loaded yet
   if (!myCompany) {
     return (
       <div className="app center">
@@ -92,7 +93,7 @@ function App() {
     )
   }
 
-  // 6. Dashboard
+  // 5. Dashboard
   return (
     <div className="app">
       <Dashboard profile={myProfile} company={myCompany} />
