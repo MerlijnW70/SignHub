@@ -1,7 +1,7 @@
-import { useTable } from 'spacetimedb/react'
-import { tables } from '../module_bindings'
-import { useIdentity } from '../hooks/useIdentity'
+import { useState } from 'react'
 import { ConnectionStatus } from './ConnectionStatus'
+import { TeamManagement } from './TeamManagement'
+import { useIdentity } from '../hooks/useIdentity'
 import type { UserProfile } from '../module_bindings/types'
 import type { Company } from '../module_bindings/types'
 
@@ -11,12 +11,14 @@ interface DashboardProps {
 }
 
 export function Dashboard({ profile, company }: DashboardProps) {
-  const { isMe } = useIdentity()
-  const [allProfiles] = useTable(tables.user_profile)
+  const { identityHex } = useIdentity()
+  const [copied, setCopied] = useState(false)
 
-  const teamMembers = allProfiles.filter(
-    p => p.companyId !== undefined && p.companyId !== null && p.companyId === company.id
-  )
+  const copyIdentity = async () => {
+    await navigator.clipboard.writeText(identityHex)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
 
   return (
     <div className="dashboard">
@@ -44,23 +46,19 @@ export function Dashboard({ profile, company }: DashboardProps) {
             <span className="info-label">Role</span>
             <span className="info-value">{profile.isAdmin ? 'Admin' : 'Member'}</span>
           </div>
+          <div className="info-item">
+            <span className="info-label">Your Identity</span>
+            <span className="info-value identity-value">
+              <code className="identity-hex">{identityHex.slice(0, 12)}...{identityHex.slice(-8)}</code>
+              <button className="btn-copy" onClick={copyIdentity}>
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </span>
+          </div>
         </div>
       </section>
 
-      <section className="dashboard-section">
-        <h2>Team ({teamMembers.length})</h2>
-        <ul className="team-list">
-          {teamMembers.map(member => (
-            <li key={String(member.identity)} className="team-member">
-              <span className="member-name">
-                {member.fullName}
-                {isMe(member.identity) && <span className="you-badge">you</span>}
-              </span>
-              <span className="member-role">{member.isAdmin ? 'Admin' : 'Member'}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <TeamManagement company={company} isAdmin={profile.isAdmin} />
     </div>
   )
 }
