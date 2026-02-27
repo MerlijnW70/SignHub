@@ -1,6 +1,7 @@
 import { ConnectionStatus } from './ConnectionStatus'
 import { TeamManagement } from './TeamManagement'
 import { InviteCodeManager } from './InviteCodeManager'
+import { CompanySettings } from './CompanySettings'
 import type { UserProfile } from '../module_bindings/types'
 import type { Company } from '../module_bindings/types'
 
@@ -38,6 +39,8 @@ export function Dashboard({ profile, company }: DashboardProps) {
           </div>
         </div>
       </section>
+
+      {profile.isAdmin && <CompanySettings company={company} />}
 
       <TeamManagement company={company} isAdmin={profile.isAdmin} />
 

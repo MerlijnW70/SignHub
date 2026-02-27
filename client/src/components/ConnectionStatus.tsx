@@ -1,6 +1,7 @@
 import { useTable } from 'spacetimedb/react'
 import { tables } from '../module_bindings'
 import { useIdentity } from '../hooks/useIdentity'
+import { ThemeToggle } from './ThemeToggle'
 
 export function ConnectionStatus() {
   const { isActive } = useIdentity()
@@ -19,6 +20,7 @@ export function ConnectionStatus() {
         <span className={`dot ${isActive ? 'online' : 'offline'}`} />
         <span>{isActive ? 'Connected' : 'Connecting...'}</span>
         {isActive && <span className="online-count">{onlineCount} online</span>}
+        <ThemeToggle />
       </div>
     </>
   )
