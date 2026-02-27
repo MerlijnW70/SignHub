@@ -6,13 +6,17 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
-import AddReducer from "../add_reducer";
-import DeletePersonReducer from "../delete_person_reducer";
-import SayHelloReducer from "../say_hello_reducer";
-import UpdatePersonNameReducer from "../update_person_name_reducer";
+import AddColleagueByIdentityReducer from "../add_colleague_by_identity_reducer";
+import CreateCompanyReducer from "../create_company_reducer";
+import CreateUserProfileReducer from "../create_user_profile_reducer";
+import RemoveColleagueReducer from "../remove_colleague_reducer";
+import UpdateCapabilitiesReducer from "../update_capabilities_reducer";
+import UpdateCompanyProfileReducer from "../update_company_profile_reducer";
 
-export type AddParams = __Infer<typeof AddReducer>;
-export type DeletePersonParams = __Infer<typeof DeletePersonReducer>;
-export type SayHelloParams = __Infer<typeof SayHelloReducer>;
-export type UpdatePersonNameParams = __Infer<typeof UpdatePersonNameReducer>;
+export type AddColleagueByIdentityParams = __Infer<typeof AddColleagueByIdentityReducer>;
+export type CreateCompanyParams = __Infer<typeof CreateCompanyReducer>;
+export type CreateUserProfileParams = __Infer<typeof CreateUserProfileReducer>;
+export type RemoveColleagueParams = __Infer<typeof RemoveColleagueReducer>;
+export type UpdateCapabilitiesParams = __Infer<typeof UpdateCapabilitiesReducer>;
+export type UpdateCompanyProfileParams = __Infer<typeof UpdateCompanyProfileReducer>;
 

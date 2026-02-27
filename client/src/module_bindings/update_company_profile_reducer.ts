@@ -10,4 +10,10 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default {};
+export default {
+  name: __t.string(),
+  slug: __t.string(),
+  location: __t.string(),
+  bio: __t.string(),
+  isPublic: __t.bool(),
+};

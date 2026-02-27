@@ -10,16 +10,38 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export const Person = __t.object("Person", {
-  id: __t.u64(),
-  owner: __t.identity(),
-  name: __t.string(),
+export const Capability = __t.object("Capability", {
+  companyId: __t.u64(),
+  canInstall: __t.bool(),
+  hasCnc: __t.bool(),
+  hasLargeFormat: __t.bool(),
+  hasBucketTruck: __t.bool(),
 });
-export type Person = __Infer<typeof Person>;
+export type Capability = __Infer<typeof Capability>;
 
-export const User = __t.object("User", {
+export const Company = __t.object("Company", {
+  id: __t.u64(),
+  ownerIdentity: __t.identity(),
+  name: __t.string(),
+  slug: __t.string(),
+  location: __t.string(),
+  bio: __t.string(),
+  isPublic: __t.bool(),
+});
+export type Company = __Infer<typeof Company>;
+
+export const OnlineUser = __t.object("OnlineUser", {
   identity: __t.identity(),
   online: __t.bool(),
 });
-export type User = __Infer<typeof User>;
+export type OnlineUser = __Infer<typeof OnlineUser>;
+
+export const UserProfile = __t.object("UserProfile", {
+  identity: __t.identity(),
+  companyId: __t.option(__t.u64()),
+  fullName: __t.string(),
+  email: __t.string(),
+  isAdmin: __t.bool(),
+});
+export type UserProfile = __Infer<typeof UserProfile>;
 

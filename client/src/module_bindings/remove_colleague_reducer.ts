@@ -11,5 +11,5 @@ import {
 } from "spacetimedb";
 
 export default {
-  id: __t.u64(),
+  colleagueIdentity: __t.identity(),
 };

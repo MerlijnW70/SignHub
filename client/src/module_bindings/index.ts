@@ -34,51 +34,83 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
-import AddReducer from "./add_reducer";
-import DeletePersonReducer from "./delete_person_reducer";
-import SayHelloReducer from "./say_hello_reducer";
-import UpdatePersonNameReducer from "./update_person_name_reducer";
+import AddColleagueByIdentityReducer from "./add_colleague_by_identity_reducer";
+import CreateCompanyReducer from "./create_company_reducer";
+import CreateUserProfileReducer from "./create_user_profile_reducer";
+import RemoveColleagueReducer from "./remove_colleague_reducer";
+import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
+import UpdateCompanyProfileReducer from "./update_company_profile_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import PersonRow from "./person_table";
-import UserRow from "./user_table";
+import CapabilityRow from "./capability_table";
+import CompanyRow from "./company_table";
+import OnlineUserRow from "./online_user_table";
+import UserProfileRow from "./user_profile_table";
 
 /** Type-only namespace exports for generated type groups. */
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  person: __table({
-    name: 'person',
+  capability: __table({
+    name: 'capability',
+    indexes: [
+      { name: 'company_id', algorithm: 'btree', columns: [
+        'companyId',
+      ] },
+    ],
+    constraints: [
+      { name: 'capability_company_id_key', constraint: 'unique', columns: ['companyId'] },
+    ],
+  }, CapabilityRow),
+  company: __table({
+    name: 'company',
     indexes: [
       { name: 'id', algorithm: 'btree', columns: [
         'id',
       ] },
+      { name: 'slug', algorithm: 'btree', columns: [
+        'slug',
+      ] },
     ],
     constraints: [
-      { name: 'person_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'company_id_key', constraint: 'unique', columns: ['id'] },
+      { name: 'company_slug_key', constraint: 'unique', columns: ['slug'] },
     ],
-  }, PersonRow),
-  user: __table({
-    name: 'user',
+  }, CompanyRow),
+  online_user: __table({
+    name: 'online_user',
     indexes: [
       { name: 'identity', algorithm: 'btree', columns: [
         'identity',
       ] },
     ],
     constraints: [
-      { name: 'user_identity_key', constraint: 'unique', columns: ['identity'] },
+      { name: 'online_user_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
-  }, UserRow),
+  }, OnlineUserRow),
+  user_profile: __table({
+    name: 'user_profile',
+    indexes: [
+      { name: 'identity', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+    ],
+    constraints: [
+      { name: 'user_profile_identity_key', constraint: 'unique', columns: ['identity'] },
+    ],
+  }, UserProfileRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
-  __reducerSchema("add", AddReducer),
-  __reducerSchema("delete_person", DeletePersonReducer),
-  __reducerSchema("say_hello", SayHelloReducer),
-  __reducerSchema("update_person_name", UpdatePersonNameReducer),
+  __reducerSchema("add_colleague_by_identity", AddColleagueByIdentityReducer),
+  __reducerSchema("create_company", CreateCompanyReducer),
+  __reducerSchema("create_user_profile", CreateUserProfileReducer),
+  __reducerSchema("remove_colleague", RemoveColleagueReducer),
+  __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),
+  __reducerSchema("update_company_profile", UpdateCompanyProfileReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
