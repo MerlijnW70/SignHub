@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useReducer } from 'spacetimedb/react'
 import { reducers } from '../module_bindings'
 import { useFormAction } from '../hooks/useFormAction'
@@ -20,9 +20,15 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
 
   const { error, success, loading, run } = useFormAction()
   const [copiedCode, setCopiedCode] = useState('')
+  const [maxUses, setMaxUses] = useState(10)
+  const copyTimer = useRef<ReturnType<typeof setTimeout>>()
+
+  useEffect(() => {
+    return () => clearTimeout(copyTimer.current)
+  }, [])
 
   const handleGenerate = () => {
-    run(() => generateCode({ maxUses: 10 }), 'Invite code generated')
+    run(() => generateCode({ maxUses }), 'Invite code generated')
   }
 
   const handleDelete = (code: string) => {
@@ -42,7 +48,8 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
       document.body.removeChild(input)
     }
     setCopiedCode(code)
-    setTimeout(() => setCopiedCode(''), 2000)
+    clearTimeout(copyTimer.current)
+    copyTimer.current = setTimeout(() => setCopiedCode(''), 2000)
   }
 
   return (
@@ -79,13 +86,26 @@ export function InviteCodeManager({ companyId }: InviteCodeManagerProps) {
         </ul>
       )}
 
-      <button
-        className="btn-generate"
-        onClick={handleGenerate}
-        disabled={loading}
-      >
-        {loading ? 'Generating...' : 'Generate Invite Code'}
-      </button>
+      <div className="generate-controls">
+        <label className="max-uses-label">
+          Max uses
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={maxUses}
+            onChange={e => setMaxUses(Math.max(1, Number(e.target.value)))}
+            className="max-uses-input"
+          />
+        </label>
+        <button
+          className="btn-generate"
+          onClick={handleGenerate}
+          disabled={loading}
+        >
+          {loading ? 'Generating...' : 'Generate Invite Code'}
+        </button>
+      </div>
 
       {error && <p className="error">{error}</p>}
       {success && <p className="success">{success}</p>}

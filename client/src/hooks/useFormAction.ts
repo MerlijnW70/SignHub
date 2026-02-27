@@ -13,12 +13,16 @@ export function useFormAction(): FormAction {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
+  const loadingRef = useRef(false)
   const errorTimer = useRef<ReturnType<typeof setTimeout>>()
   const successTimer = useRef<ReturnType<typeof setTimeout>>()
+  const mountedRef = useRef(true)
 
-  // Clean up timers on unmount
+  // Track mounted state for safe state updates
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       clearTimeout(errorTimer.current)
       clearTimeout(successTimer.current)
     }
@@ -35,19 +39,24 @@ export function useFormAction(): FormAction {
   }, [])
 
   const run = useCallback(async (fn: () => Promise<void>, successMessage?: string) => {
-    if (loading) return
+    if (loadingRef.current) return
 
     clearError()
     clearSuccess()
+    loadingRef.current = true
     setLoading(true)
 
     try {
       await fn()
-      if (successMessage) {
+      if (mountedRef.current && successMessage) {
         setSuccess(successMessage)
-        successTimer.current = setTimeout(() => setSuccess(''), 3000)
+        clearTimeout(successTimer.current)
+        successTimer.current = setTimeout(() => {
+          if (mountedRef.current) setSuccess('')
+        }, 3000)
       }
     } catch (err) {
+      if (!mountedRef.current) return
       let msg: string
       if (err instanceof Error) {
         msg = err.message
@@ -60,11 +69,15 @@ export function useFormAction(): FormAction {
       msg = msg.replace(/^(ReducerError|Error): /i, '')
       setError(msg || 'An unexpected error occurred')
       console.error('Action failed:', err)
-      errorTimer.current = setTimeout(() => setError(''), 5000)
+      clearTimeout(errorTimer.current)
+      errorTimer.current = setTimeout(() => {
+        if (mountedRef.current) setError('')
+      }, 5000)
     } finally {
-      setLoading(false)
+      loadingRef.current = false
+      if (mountedRef.current) setLoading(false)
     }
-  }, [loading, clearError, clearSuccess])
+  }, [clearError, clearSuccess])
 
   return { error, success, loading, run, clearError, clearSuccess }
 }

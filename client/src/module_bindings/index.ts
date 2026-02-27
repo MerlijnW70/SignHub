@@ -41,6 +41,7 @@ import CancelRequestReducer from "./cancel_request_reducer";
 import CreateAccountReducer from "./create_account_reducer";
 import CreateCompanyReducer from "./create_company_reducer";
 import DeclineConnectionReducer from "./decline_connection_reducer";
+import DeleteCompanyReducer from "./delete_company_reducer";
 import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
 import DisconnectCompanyReducer from "./disconnect_company_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
@@ -177,6 +178,7 @@ const reducersSchema = __reducers(
   __reducerSchema("create_account", CreateAccountReducer),
   __reducerSchema("create_company", CreateCompanyReducer),
   __reducerSchema("decline_connection", DeclineConnectionReducer),
+  __reducerSchema("delete_company", DeleteCompanyReducer),
   __reducerSchema("delete_invite_code", DeleteInviteCodeReducer),
   __reducerSchema("disconnect_company", DisconnectCompanyReducer),
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),

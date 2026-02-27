@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from '../module_bindings'
@@ -34,6 +34,21 @@ export function TeamManagement({ company, myRole }: TeamManagementProps) {
 
   const [transferTarget, setTransferTarget] = useState<ActionTarget | null>(null)
   const [removeTarget, setRemoveTarget] = useState<ActionTarget | null>(null)
+
+  // Close modals on Escape key
+  const handleEscape = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setTransferTarget(null)
+      setRemoveTarget(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (transferTarget || removeTarget) {
+      document.addEventListener('keydown', handleEscape)
+      return () => document.removeEventListener('keydown', handleEscape)
+    }
+  }, [transferTarget, removeTarget, handleEscape])
 
   const isOwner = myRole === 'Owner'
   const canManage = myRole !== 'Member' && myRole !== 'Field'

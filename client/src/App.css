@@ -559,8 +559,32 @@
   color: var(--text-primary);
 }
 
-.btn-generate {
+.generate-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
   margin-top: 1rem;
+}
+
+.max-uses-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.max-uses-input {
+  width: 4rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.btn-generate {
   padding: 0.5rem 1rem;
   border: 1px solid var(--border);
   border-radius: 6px;

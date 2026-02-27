@@ -32,8 +32,11 @@ export function CompanySettings({ company }: CompanySettingsProps) {
     setKvkNumber(company.kvkNumber)
   }, [company.name, company.slug, company.location, company.bio, company.isPublic, company.kvkNumber])
 
+  const profileValid = name.trim().length > 0 && slug.trim().length > 0 && location.trim().length > 0
+
   const handleProfileSubmit = (e: FormEvent) => {
     e.preventDefault()
+    if (!profileValid) return
     profileAction.run(
       () => updateProfile({
         name: name.trim(),
@@ -170,7 +173,7 @@ export function CompanySettings({ company }: CompanySettingsProps) {
             Visible in public directory
           </label>
           <div className="settings-actions">
-            <button className="btn-save" type="submit" disabled={profileAction.loading}>
+            <button className="btn-save" type="submit" disabled={profileAction.loading || !profileValid}>
               {profileAction.loading ? 'Saving...' : 'Save Profile'}
             </button>
             {profileAction.error && <span className="error">{profileAction.error}</span>}

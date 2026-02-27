@@ -20,7 +20,9 @@ export function SignUpForm() {
     }))
   }
 
-  const isValid = fullName.trim().length > 0 && nickname.trim().length > 0 && email.trim().length > 0
+  const emailTrimmed = email.trim()
+  const emailValid = emailTrimmed.includes('@') && emailTrimmed.indexOf('@') > 0 && emailTrimmed.indexOf('.', emailTrimmed.indexOf('@')) > emailTrimmed.indexOf('@') + 1
+  const isValid = fullName.trim().length > 0 && nickname.trim().length > 0 && emailValid
 
   return (
     <div className="form-container">

@@ -54,7 +54,9 @@ export function useFilteredTable<T>(
     return () => {
       sub.unsubscribe()
     }
-  }, [sql, connectionState.isActive, connectionState])
+    // connectionState.isActive is the stable trigger; getConnection is a method ref
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sql, connectionState.isActive])
 
   // Re-render on any table row change
   useEffect(() => {
@@ -72,7 +74,8 @@ export function useFilteredTable<T>(
       table.removeOnDelete(bump)
       table.removeOnUpdate?.(bump)
     }
-  }, [connectionState.isActive, connectionState, accessorName, bump])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionState.isActive, accessorName, bump])
 
   // Read from local cache (only contains server-filtered rows)
   const rows = useMemo(() => {
@@ -82,8 +85,9 @@ export function useFilteredTable<T>(
     const table: AnyTable = conn.db[accessorName]
     if (!table) return []
     return Array.from(table.iter()) as T[]
+    // version counter drives re-reads; isActive gates access
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, connectionState.isActive, connectionState, accessorName])
+  }, [version, connectionState.isActive, accessorName])
 
   return [rows, ready]
 }

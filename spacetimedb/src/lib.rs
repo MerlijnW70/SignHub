@@ -144,15 +144,50 @@ const MAX_INVITE_CODE: usize = 25;
 const MAX_MESSAGE: usize = 500;
 
 /// Validates that a trimmed string does not exceed `max_len` characters.
-///
-/// # Errors
-///
-/// Returns a descriptive error if the string is too long.
 fn validate_length(value: &str, field: &str, max_len: usize) -> Result<(), String> {
     if value.len() > max_len {
         return Err(format!("{field} is too long (max {max_len} characters)"));
     }
     Ok(())
+}
+
+/// Validates that a trimmed string is not empty.
+fn validate_not_empty(value: &str, field: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{field} cannot be empty"));
+    }
+    Ok(())
+}
+
+/// Validates basic email format (contains @ with text on both sides).
+fn validate_email(email: &str) -> Result<(), String> {
+    let parts: Vec<&str> = email.splitn(2, '@').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() || !parts[1].contains('.') {
+        return Err("Invalid email format".to_string());
+    }
+    Ok(())
+}
+
+/// Normalizes a slug: lowercase, spaces to dashes, collapse consecutive
+/// dashes, strip leading/trailing dashes.
+fn normalize_slug(raw: &str) -> String {
+    let mut slug = raw.trim().to_lowercase().replace(' ', "-");
+    // Collapse consecutive dashes
+    while slug.contains("--") {
+        slug = slug.replace("--", "-");
+    }
+    // Strip leading/trailing dashes
+    slug.trim_matches('-').to_string()
+}
+
+/// Formats an Identity for logging (first 12 hex chars).
+fn id_short(identity: Identity) -> String {
+    let hex = identity.to_hex().to_string();
+    if hex.len() > 12 {
+        format!("{}...", &hex[..12])
+    } else {
+        hex
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,18 +318,13 @@ pub fn create_account(
     let nickname = nickname.trim().to_string();
     let email = email.trim().to_string();
 
-    if full_name.is_empty() {
-        return Err("Name cannot be empty".to_string());
-    }
-    if nickname.is_empty() {
-        return Err("Nickname cannot be empty".to_string());
-    }
-    if email.is_empty() {
-        return Err("Email cannot be empty".to_string());
-    }
+    validate_not_empty(&full_name, "Name")?;
+    validate_not_empty(&nickname, "Nickname")?;
+    validate_not_empty(&email, "Email")?;
     validate_length(&full_name, "Full name", MAX_FULL_NAME)?;
     validate_length(&nickname, "Nickname", MAX_NICKNAME)?;
     validate_length(&email, "Email", MAX_EMAIL)?;
+    validate_email(&email)?;
     if ctx.db.user_account().identity().find(ctx.sender()).is_some() {
         return Err("Account already exists".to_string());
     }
@@ -327,14 +357,11 @@ pub fn update_profile(
     let nickname = nickname.trim().to_string();
     let email = email.trim().to_string();
 
-    if nickname.is_empty() {
-        return Err("Nickname cannot be empty".to_string());
-    }
-    if email.is_empty() {
-        return Err("Email cannot be empty".to_string());
-    }
+    validate_not_empty(&nickname, "Nickname")?;
+    validate_not_empty(&email, "Email")?;
     validate_length(&nickname, "Nickname", MAX_NICKNAME)?;
     validate_length(&email, "Email", MAX_EMAIL)?;
+    validate_email(&email)?;
 
     let account = ctx
         .db
@@ -367,18 +394,12 @@ pub fn create_company(
     location: String,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    let slug = slug.trim().to_lowercase().replace(' ', "-");
+    let slug = normalize_slug(&slug);
     let location = location.trim().to_string();
 
-    if name.is_empty() {
-        return Err("Company name cannot be empty".to_string());
-    }
-    if slug.is_empty() {
-        return Err("Slug cannot be empty".to_string());
-    }
-    if location.is_empty() {
-        return Err("Location cannot be empty".to_string());
-    }
+    validate_not_empty(&name, "Company name")?;
+    validate_not_empty(&slug, "Slug")?;
+    validate_not_empty(&location, "Location")?;
     validate_length(&name, "Company name", MAX_COMPANY_NAME)?;
     validate_length(&slug, "Slug", MAX_SLUG)?;
     validate_length(&location, "Location", MAX_LOCATION)?;
@@ -622,6 +643,13 @@ pub fn remove_colleague(
         ..colleague
     });
 
+    log::info!(
+        "AUDIT: User {} of Company {} removed colleague {}",
+        id_short(ctx.sender()),
+        company_id,
+        id_short(colleague_identity)
+    );
+
     Ok(())
 }
 
@@ -647,17 +675,14 @@ pub fn update_company_profile(
     kvk_number: String,
 ) -> Result<(), String> {
     let name = name.trim().to_string();
-    let slug = slug.trim().to_lowercase().replace(' ', "-");
+    let slug = normalize_slug(&slug);
     let location = location.trim().to_string();
     let bio = bio.trim().to_string();
     let kvk_number = kvk_number.trim().to_string();
 
-    if name.is_empty() {
-        return Err("Company name cannot be empty".to_string());
-    }
-    if slug.is_empty() {
-        return Err("Slug cannot be empty".to_string());
-    }
+    validate_not_empty(&name, "Company name")?;
+    validate_not_empty(&slug, "Slug")?;
+    validate_not_empty(&location, "Location")?;
     validate_length(&name, "Company name", MAX_COMPANY_NAME)?;
     validate_length(&slug, "Slug", MAX_SLUG)?;
     validate_length(&location, "Location", MAX_LOCATION)?;
@@ -775,6 +800,14 @@ pub fn update_user_role(
         ..target
     });
 
+    log::info!(
+        "AUDIT: User {} of Company {} changed role of {} to {:?}",
+        id_short(ctx.sender()),
+        company_id,
+        id_short(target_identity),
+        new_role
+    );
+
     Ok(())
 }
 
@@ -836,6 +869,13 @@ pub fn transfer_ownership(
         role: UserRole::Owner,
         ..target
     });
+
+    log::info!(
+        "AUDIT: User {} of Company {} transferred ownership to {}",
+        id_short(ctx.sender()),
+        company_id,
+        id_short(new_owner_identity)
+    );
 
     Ok(())
 }
@@ -1065,6 +1105,13 @@ pub fn block_company(
         });
     }
 
+    log::info!(
+        "AUDIT: User {} of Company {} blocked Company {}",
+        id_short(ctx.sender()),
+        my_company_id,
+        target_company_id
+    );
+
     Ok(())
 }
 
@@ -1102,6 +1149,14 @@ pub fn unblock_company(
     }
 
     ctx.db.company_connection().id().delete(conn.id);
+
+    log::info!(
+        "AUDIT: User {} of Company {} unblocked Company {}",
+        id_short(ctx.sender()),
+        my_company_id,
+        target_company_id
+    );
+
     Ok(())
 }
 
@@ -1127,6 +1182,99 @@ pub fn disconnect_company(
 
     delete_connection_chat(ctx, conn.id);
     ctx.db.company_connection().id().delete(conn.id);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Company Deletion (cascade-aware)
+// ---------------------------------------------------------------------------
+
+/// Permanently deletes a company and all associated data. Only the Owner can
+/// do this. Cascades to: invite codes, capabilities, connections (+ chat),
+/// and unlinks all members.
+///
+/// # Errors
+///
+/// Returns an error if the caller is not the Owner or the company is not found.
+#[spacetimedb::reducer]
+pub fn delete_company(ctx: &ReducerContext) -> Result<(), String> {
+    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Owner)?;
+
+    let company = ctx
+        .db
+        .company()
+        .id()
+        .find(company_id)
+        .ok_or("Company not found")?;
+
+    if company.owner_identity != ctx.sender() {
+        return Err("Only the recorded company owner can delete the company".to_string());
+    }
+
+    // 1. Delete all invite codes for this company
+    let invite_codes: Vec<String> = ctx
+        .db
+        .invite_code()
+        .invite_by_company()
+        .filter(&company_id)
+        .map(|ic| ic.code)
+        .collect();
+    for code in invite_codes {
+        ctx.db.invite_code().code().delete(&code);
+    }
+
+    // 2. Unlink all members (set company_id = None, role = Member)
+    let member_ids: Vec<Identity> = ctx
+        .db
+        .user_account()
+        .iter()
+        .filter(|a| a.company_id == Some(company_id))
+        .map(|a| a.identity)
+        .collect();
+    for member_id in &member_ids {
+        if let Some(account) = ctx.db.user_account().identity().find(*member_id) {
+            ctx.db.user_account().identity().update(UserAccount {
+                company_id: None,
+                role: UserRole::Member,
+                ..account
+            });
+        }
+    }
+
+    // 3. Delete capability row
+    ctx.db.capability().company_id().delete(company_id);
+
+    // 4. Delete all connections and their chat messages
+    let conn_ids: Vec<u64> = ctx
+        .db
+        .company_connection()
+        .conn_by_company_a()
+        .filter(&company_id)
+        .map(|c| c.id)
+        .collect();
+    let conn_ids_b: Vec<u64> = ctx
+        .db
+        .company_connection()
+        .conn_by_company_b()
+        .filter(&company_id)
+        .map(|c| c.id)
+        .collect();
+    for conn_id in conn_ids.iter().chain(conn_ids_b.iter()) {
+        delete_connection_chat(ctx, *conn_id);
+        ctx.db.company_connection().id().delete(*conn_id);
+    }
+
+    // 5. Delete the company row
+    ctx.db.company().id().delete(company_id);
+
+    log::info!(
+        "AUDIT: User {} deleted Company {} (name: {}, {} members unlinked)",
+        id_short(ctx.sender()),
+        company_id,
+        company.name,
+        member_ids.len()
+    );
+
     Ok(())
 }
 
