@@ -14,8 +14,8 @@ export function useFormAction(): FormAction {
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(false)
   const loadingRef = useRef(false)
-  const errorTimer = useRef<ReturnType<typeof setTimeout>>()
-  const successTimer = useRef<ReturnType<typeof setTimeout>>()
+  const errorTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const successTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const mountedRef = useRef(true)
 
   // Track mounted state for safe state updates
