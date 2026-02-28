@@ -107,7 +107,7 @@ pub struct Connection {
     pub company_b: u64,
     pub status: ConnectionStatus,
     pub requested_by: Identity,
-    pub blocked_by: Option<Identity>,
+    pub blocking_company_id: Option<u64>,
     pub initial_message: String,
     pub created_at: Timestamp,
 }
@@ -159,11 +159,53 @@ fn validate_not_empty(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validates basic email format (contains @ with text on both sides).
+/// Validates email format: local@domain.tld with structural checks.
 fn validate_email(email: &str) -> Result<(), String> {
     let parts: Vec<&str> = email.splitn(2, '@').collect();
-    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() || !parts[1].contains('.') {
+    if parts.len() != 2 {
         return Err("Invalid email format".to_string());
+    }
+
+    let local = parts[0];
+    let domain = parts[1];
+
+    // Local part: non-empty, max 64 chars, no leading/trailing dots
+    if local.is_empty() || local.len() > 64 {
+        return Err("Invalid email format".to_string());
+    }
+    if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return Err("Invalid email format".to_string());
+    }
+
+    // Domain: non-empty, has dot, no leading/trailing/consecutive dots
+    if domain.is_empty() || !domain.contains('.') {
+        return Err("Invalid email format".to_string());
+    }
+    if domain.starts_with('.') || domain.ends_with('.') || domain.contains("..") {
+        return Err("Invalid email format".to_string());
+    }
+
+    // TLD must be at least 2 characters
+    let tld = domain.rsplit('.').next().unwrap_or("");
+    if tld.len() < 2 {
+        return Err("Invalid email format".to_string());
+    }
+
+    Ok(())
+}
+
+/// Validates that an invite code matches the XXXX-XXXX-XXXX-XXXX format
+/// using the unambiguous charset (no 0/O/1/I).
+fn validate_invite_code_format(code: &str) -> Result<(), String> {
+    const VALID_CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let parts: Vec<&str> = code.split('-').collect();
+    if parts.len() != 4 {
+        return Err("Invalid invite code".to_string());
+    }
+    for part in &parts {
+        if part.len() != 4 || !part.bytes().all(|b| VALID_CHARS.contains(&b)) {
+            return Err("Invalid invite code".to_string());
+        }
     }
     Ok(())
 }
@@ -222,11 +264,11 @@ fn require_role_at_least(
         .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create an account first")?;
+        .ok_or("Not permitted")?;
 
     let company_id = account
         .company_id
-        .ok_or("You must belong to a company first")?;
+        .ok_or("Not permitted")?;
 
     if role_level(account.role) < role_level(min_role) {
         return Err(match min_role {
@@ -409,7 +451,7 @@ pub fn create_company(
         .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create an account first")?;
+        .ok_or("Account not found")?;
 
     if account.company_id.is_some() {
         return Err("You already belong to a company".to_string());
@@ -494,13 +536,14 @@ pub fn generate_invite_code(ctx: &ReducerContext, max_uses: u32) -> Result<(), S
 pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
     let code = code.trim().to_uppercase();
     validate_length(&code, "Invite code", MAX_INVITE_CODE)?;
+    validate_invite_code_format(&code)?;
 
     let account = ctx
         .db
         .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create an account first")?;
+        .ok_or("Account not found")?;
 
     if account.company_id.is_some() {
         return Err("You already belong to a company".to_string());
@@ -558,7 +601,7 @@ pub fn delete_invite_code(ctx: &ReducerContext, code: String) -> Result<(), Stri
         .ok_or("Invite code not found")?;
 
     if invite.company_id != company_id {
-        return Err("Invite code belongs to a different company".to_string());
+        return Err("Invite code not found".to_string());
     }
 
     ctx.db.invite_code().code().delete(&code);
@@ -590,7 +633,7 @@ pub fn add_colleague_by_identity(
         .ok_or("Colleague account not found")?;
 
     if colleague.company_id.is_some() {
-        return Err("This user already belongs to a company".to_string());
+        return Err("Cannot add this user".to_string());
     }
 
     ctx.db.user_account().identity().update(UserAccount {
@@ -649,6 +692,39 @@ pub fn remove_colleague(
         company_id,
         id_short(colleague_identity)
     );
+
+    Ok(())
+}
+
+/// Voluntarily leave your current company. Owners must transfer ownership
+/// first — they cannot abandon a company.
+///
+/// # Errors
+///
+/// Returns an error if the caller has no account, does not belong to a
+/// company, or is the Owner.
+#[spacetimedb::reducer]
+pub fn leave_company(ctx: &ReducerContext) -> Result<(), String> {
+    let account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Account not found")?;
+
+    account
+        .company_id
+        .ok_or("You do not belong to a company")?;
+
+    if account.role == UserRole::Owner {
+        return Err("Transfer ownership before leaving the company".to_string());
+    }
+
+    ctx.db.user_account().identity().update(UserAccount {
+        company_id: None,
+        role: UserRole::Member,
+        ..account
+    });
 
     Ok(())
 }
@@ -850,7 +926,7 @@ pub fn transfer_ownership(
         .ok_or("Company not found")?;
 
     if company.owner_identity != ctx.sender() {
-        return Err("Only the recorded company owner can transfer ownership".to_string());
+        return Err("Only the owner can do this".to_string());
     }
 
     ctx.db.company().id().update(Company {
@@ -951,7 +1027,7 @@ pub fn request_connection(
         company_b: hi,
         status: ConnectionStatus::Pending,
         requested_by: ctx.sender(),
-        blocked_by: None,
+        blocking_company_id: None,
         initial_message: message,
         created_at: ctx.timestamp,
     });
@@ -1083,7 +1159,7 @@ pub fn block_company(
         }
         ctx.db.company_connection().id().update(Connection {
             status: ConnectionStatus::Blocked,
-            blocked_by: Some(ctx.sender()),
+            blocking_company_id: Some(my_company_id),
             ..conn
         });
     } else {
@@ -1099,7 +1175,7 @@ pub fn block_company(
             company_b: hi,
             status: ConnectionStatus::Blocked,
             requested_by: ctx.sender(),
-            blocked_by: Some(ctx.sender()),
+            blocking_company_id: Some(my_company_id),
             initial_message: String::new(),
             created_at: ctx.timestamp,
         });
@@ -1135,16 +1211,10 @@ pub fn unblock_company(
         return Err("Connection is not blocked".to_string());
     }
 
-    // Only the company that blocked can unblock
-    if let Some(blocker_identity) = conn.blocked_by {
-        if let Some(blocker_account) =
-            ctx.db.user_account().identity().find(blocker_identity)
-        {
-            if blocker_account.company_id != Some(my_company_id) {
-                return Err("Only the company that blocked can unblock".to_string());
-            }
-        } else {
-            // Blocker left the platform — allow any involved admin to clean up
+    // Only the company that performed the block can unblock
+    if let Some(blocker_company) = conn.blocking_company_id {
+        if blocker_company != my_company_id {
+            return Err("Only the company that blocked can unblock".to_string());
         }
     }
 
@@ -1208,7 +1278,7 @@ pub fn delete_company(ctx: &ReducerContext) -> Result<(), String> {
         .ok_or("Company not found")?;
 
     if company.owner_identity != ctx.sender() {
-        return Err("Only the recorded company owner can delete the company".to_string());
+        return Err("Only the owner can do this".to_string());
     }
 
     // 1. Delete all invite codes for this company
@@ -1308,7 +1378,7 @@ pub fn send_connection_chat(
         .user_account()
         .identity()
         .find(ctx.sender())
-        .ok_or("Create an account first")?;
+        .ok_or("Account not found")?;
 
     let my_company_id = account
         .company_id

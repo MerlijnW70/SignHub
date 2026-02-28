@@ -295,8 +295,10 @@ function JoinCompanySection({ onBack }: { onBack: () => void }) {
 
 function ProfileSection({ account }: { account: UserAccount }) {
   const updateProfile = useReducer(reducers.updateProfile)
+  const leaveCompany = useReducer(reducers.leaveCompany)
   const { error, success, loading, run } = useFormAction()
   const [editing, setEditing] = useState(false)
+  const [confirmLeave, setConfirmLeave] = useState(false)
   const [fullName, setFullName] = useState(account.fullName)
   const [nickname, setNickname] = useState(account.nickname)
   const [email, setEmail] = useState(account.email)
@@ -334,6 +336,20 @@ function ProfileSection({ account }: { account: UserAccount }) {
           {' '}
           <button onClick={() => setEditing(false)}>Cancel</button>
         </div>
+      )}
+      {account.role.tag !== 'Owner' && account.companyId != null && (
+        !confirmLeave ? (
+          <button onClick={() => setConfirmLeave(true)}>Leave Company</button>
+        ) : (
+          <div style={{ border: '2px solid red', padding: 8, marginTop: 8 }}>
+            <p><strong>Leave company?</strong> You will lose access and need a new invite to rejoin.</p>
+            <button onClick={() => { run(() => leaveCompany(), 'Left company'); setConfirmLeave(false) }} disabled={loading}>
+              {loading ? 'Leaving...' : 'Confirm Leave'}
+            </button>
+            {' '}
+            <button onClick={() => setConfirmLeave(false)}>Cancel</button>
+          </div>
+        )
       )}
       {error && <p style={{ color: 'red' }}>{error}</p>}
       {success && <p style={{ color: 'green' }}>{success}</p>}
@@ -620,6 +636,31 @@ function ConnectionsSection({ company }: { company: Company }) {
   const [requestMessage, setRequestMessage] = useState('')
   const chatEndRef = useRef<HTMLDivElement>(null)
 
+  // Ghosting support: track company IDs where we sent a request but no
+  // Pending row appeared (because the target silently blocked us).
+  // We show these as phantom "Pending" entries so the blocked party
+  // can't tell they've been ghosted. Persisted to localStorage so a
+  // page refresh doesn't reveal the ghost.
+  const [ghostedIds, setGhostedIds] = useState<Set<bigint>>(() => {
+    try {
+      const stored = localStorage.getItem(`ghosted_${String(company.id)}`)
+      if (stored) {
+        return new Set(JSON.parse(stored).map((v: string) => BigInt(v)))
+      }
+    } catch { /* ignore */ }
+    return new Set()
+  })
+
+  // Persist ghosted IDs whenever they change
+  useEffect(() => {
+    const key = `ghosted_${String(company.id)}`
+    if (ghostedIds.size === 0) {
+      localStorage.removeItem(key)
+    } else {
+      localStorage.setItem(key, JSON.stringify([...ghostedIds].map(String)))
+    }
+  }, [ghostedIds, company.id])
+
   const getOtherCompanyId = (conn: typeof connections[0]) =>
     conn.companyA === company.id ? conn.companyB : conn.companyA
 
@@ -640,17 +681,30 @@ function ConnectionsSection({ company }: { company: Company }) {
   const blockedIds = new Set(connections.filter(c => c.status.tag === 'Blocked').map(getOtherCompanyId))
   const connectedIds = new Set(connections.filter(c => c.status.tag !== 'Blocked').map(getOtherCompanyId))
 
-  const publicCompanies = allCompanies.filter(c => c.isPublic)
-  const availableCompanies = publicCompanies.filter(c => c.id !== company.id && !connectedIds.has(c.id) && !blockedIds.has(c.id))
+  // Prune ghosted IDs if a real connection row now exists for that company
+  useEffect(() => {
+    if (ghostedIds.size === 0) return
+    const toRemove = [...ghostedIds].filter(id => connectedIds.has(id))
+    if (toRemove.length > 0) {
+      setGhostedIds(prev => {
+        const next = new Set(prev)
+        for (const id of toRemove) next.delete(id)
+        return next
+      })
+    }
+  }, [connectedIds, ghostedIds])
 
-  // Blocked companies we blocked
-  const blockedByUs = connections.filter(c => {
-    if (c.status.tag !== 'Blocked') return false
-    if (c.companyA !== company.id && c.companyB !== company.id) return false
-    if (!c.blockedBy) return false
-    const blockerAccount = allAccounts.find(a => toHex(a.identity) === toHex(c.blockedBy!))
-    return blockerAccount?.companyId === company.id
-  })
+  const publicCompanies = allCompanies.filter(c => c.isPublic)
+  const availableCompanies = publicCompanies.filter(
+    c => c.id !== company.id && !connectedIds.has(c.id) && !blockedIds.has(c.id) && !ghostedIds.has(c.id)
+  )
+
+  // Blocked companies we blocked (blockingCompanyId is now a company ID, not identity)
+  const blockedByUs = connections.filter(c =>
+    c.status.tag === 'Blocked'
+    && (c.companyA === company.id || c.companyB === company.id)
+    && c.blockingCompanyId === company.id
+  )
 
   const getChats = (connectionId: bigint) =>
     allChats.filter(c => c.connectionId === connectionId)
@@ -659,6 +713,19 @@ function ConnectionsSection({ company }: { company: Company }) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [allChats, expandedChat])
+
+  const handleSendRequest = (targetId: bigint) => {
+    const msg = requestMessage
+    setRequestTargetId(null)
+    setRequestMessage('')
+    run(async () => {
+      await requestConnection({ targetCompanyId: targetId, message: msg })
+      // After success, add to ghosted set. If a real Pending row appears
+      // from the subscription, the useEffect above will prune it.
+      // If the target blocked us, no row appears and the phantom stays.
+      setGhostedIds(prev => new Set(prev).add(targetId))
+    }, 'Request sent')
+  }
 
   const handleSendChat = (connectionId: bigint) => {
     if (!chatInput.trim()) return
@@ -733,8 +800,8 @@ function ConnectionsSection({ company }: { company: Company }) {
         </div>
       )}
 
-      {/* Outgoing requests */}
-      {pendingOutgoing.length > 0 && (
+      {/* Outgoing requests (real + ghosted phantoms) */}
+      {(pendingOutgoing.length > 0 || ghostedIds.size > 0) && (
         <div>
           <h3>Sent Requests</h3>
           <ul>
@@ -746,6 +813,11 @@ function ConnectionsSection({ company }: { company: Company }) {
                 {' '}
                 <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)}>Chat</button>
                 {renderChat(conn)}
+              </li>
+            ))}
+            {[...ghostedIds].map(id => (
+              <li key={`ghost-${id}`}>
+                <strong>{getCompanyName(id)}</strong> — Pending
               </li>
             ))}
           </ul>
@@ -768,7 +840,7 @@ function ConnectionsSection({ company }: { company: Company }) {
         </div>
       )}
 
-      {accepted.length === 0 && pendingIncoming.length === 0 && pendingOutgoing.length === 0 && (
+      {accepted.length === 0 && pendingIncoming.length === 0 && pendingOutgoing.length === 0 && ghostedIds.size === 0 && (
         <p>No connections yet. Browse the directory to connect with other sign shops.</p>
       )}
 
@@ -792,9 +864,9 @@ function ConnectionsSection({ company }: { company: Company }) {
                   {' '}
                   {requestTargetId === c.id ? (
                     <span>
-                      <input value={requestMessage} onChange={e => setRequestMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { run(() => requestConnection({ targetCompanyId: c.id, message: requestMessage }), 'Request sent'); setRequestTargetId(null) }}} placeholder="Message (optional)" autoFocus />
+                      <input value={requestMessage} onChange={e => setRequestMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSendRequest(c.id) }} placeholder="Message (optional)" autoFocus />
                       {' '}
-                      <button onClick={() => { run(() => requestConnection({ targetCompanyId: c.id, message: requestMessage }), 'Request sent'); setRequestTargetId(null); setRequestMessage('') }} disabled={loading}>Send</button>
+                      <button onClick={() => handleSendRequest(c.id)} disabled={loading}>Send</button>
                       {' '}
                       <button onClick={() => { setRequestTargetId(null); setRequestMessage('') }}>Cancel</button>
                     </span>

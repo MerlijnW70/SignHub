@@ -46,6 +46,7 @@ import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
 import DisconnectCompanyReducer from "./disconnect_company_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
 import JoinCompanyReducer from "./join_company_reducer";
+import LeaveCompanyReducer from "./leave_company_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
 import RequestConnectionReducer from "./request_connection_reducer";
 import SendConnectionChatReducer from "./send_connection_chat_reducer";
@@ -183,6 +184,7 @@ const reducersSchema = __reducers(
   __reducerSchema("disconnect_company", DisconnectCompanyReducer),
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
   __reducerSchema("join_company", JoinCompanyReducer),
+  __reducerSchema("leave_company", LeaveCompanyReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
   __reducerSchema("request_connection", RequestConnectionReducer),
   __reducerSchema("send_connection_chat", SendConnectionChatReducer),

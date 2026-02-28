@@ -39,7 +39,7 @@ export const Connection = __t.object("Connection", {
     return ConnectionStatus;
   },
   requestedBy: __t.identity(),
-  blockedBy: __t.option(__t.identity()),
+  blockingCompanyId: __t.option(__t.u64()),
   initialMessage: __t.string(),
   createdAt: __t.timestamp(),
 });
