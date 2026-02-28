@@ -65,9 +65,43 @@ function getCapabilities(client: TestClient) {
   return [...client.conn.db.capability.iter()]
 }
 
+function getNotifications(client: TestClient) {
+  return [...client.conn.db.notification.iter()]
+}
+
+function getProjects(client: TestClient) {
+  return [...client.conn.db.project.iter()]
+}
+
+function getProjectMembers(client: TestClient) {
+  return [...client.conn.db.project_member.iter()]
+}
+
+function getProjectChats(client: TestClient) {
+  return [...client.conn.db.project_chat.iter()]
+}
+
+function getMembers(client: TestClient) {
+  return [...client.conn.db.company_member.iter()]
+}
+
 function myAccount(client: TestClient) {
   return getAccounts(client).find(
     a => a.identity.toHexString() === client.identity.toHexString()
+  )
+}
+
+function myMembership(client: TestClient, companyId?: bigint) {
+  const cid = companyId ?? myAccount(client)?.activeCompanyId
+  if (cid == null) return undefined
+  return getMembers(client).find(
+    m => m.identity.toHexString() === client.identity.toHexString() && m.companyId === cid
+  )
+}
+
+function membershipOf(client: TestClient, targetIdentityHex: string, companyId: bigint) {
+  return getMembers(client).find(
+    m => m.identity.toHexString() === targetIdentityHex && m.companyId === companyId
   )
 }
 
@@ -86,7 +120,7 @@ describe('1. Account Creation', () => {
     expect(acct.fullName).toBe('Alice van Dijk')
     expect(acct.nickname).toBe('Alice')
     expect(acct.email).toBe('alice@alpha.test')
-    expect(acct.companyId).toBeUndefined()
+    expect(acct.activeCompanyId).toBeUndefined()
   })
 
   it('clientB creates an account', async () => {
@@ -180,10 +214,10 @@ describe('2. Company Creation', () => {
       slug: 'alpha-signs',
       location: 'Amsterdam, NL',
     })
-    await waitFor(() => myAccount(clientA)?.companyId != null)
+    await waitFor(() => myAccount(clientA)?.activeCompanyId != null)
     const acct = myAccount(clientA)!
-    companyAId = acct.companyId!
-    expect(acct.role.tag).toBe('Owner')
+    companyAId = acct.activeCompanyId!
+    expect(myMembership(clientA)?.role.tag).toBe('Owner')
     const company = getCompanies(clientA).find(c => c.id === companyAId)!
     expect(company.name).toBe('Alpha Signs')
     expect(company.slug).toBe('alpha-signs')
@@ -195,9 +229,9 @@ describe('2. Company Creation', () => {
       slug: 'beta-signs',
       location: 'Rotterdam, NL',
     })
-    await waitFor(() => myAccount(clientB)?.companyId != null)
-    companyBId = myAccount(clientB)!.companyId!
-    expect(myAccount(clientB)!.role.tag).toBe('Owner')
+    await waitFor(() => myAccount(clientB)?.activeCompanyId != null)
+    companyBId = myAccount(clientB)!.activeCompanyId!
+    expect(myMembership(clientB)?.role.tag).toBe('Owner')
   })
 
   it('rejects empty company name', async () => {
@@ -248,16 +282,24 @@ describe('2. Company Creation', () => {
     )
   })
 
-  it('rejects user already in company', async () => {
-    await expectError(
-      () =>
-        clientA.conn.reducers.createCompany({
-          name: 'Second Co',
-          slug: 'second-co',
-          location: 'Test',
-        }),
-      'already belong to a company'
-    )
+  it('allows user to create a second company (multi-company)', async () => {
+    await clientA.conn.reducers.createCompany({
+      name: 'Second Co',
+      slug: 'second-co',
+      location: 'Test',
+    })
+    await waitFor(() => getCompanies(clientA).find(c => c.slug === 'second-co') != null)
+    // Switch back to Alpha Signs
+    await clientA.conn.reducers.switchActiveCompany({ companyId: companyAId })
+    await waitFor(() => myAccount(clientA)?.activeCompanyId === companyAId)
+    // Clean up: delete the second company (switch to it first to delete)
+    const secondCo = getCompanies(clientA).find(c => c.slug === 'second-co')!
+    await clientA.conn.reducers.switchActiveCompany({ companyId: secondCo.id })
+    await waitFor(() => myAccount(clientA)?.activeCompanyId === secondCo.id)
+    await clientA.conn.reducers.deleteCompany({})
+    await waitFor(() => getCompanies(clientA).find(c => c.slug === 'second-co') == null)
+    // Switch back
+    await waitFor(() => myAccount(clientA)?.activeCompanyId === companyAId)
   })
 })
 
@@ -282,16 +324,16 @@ describe('3. Invite Code System', () => {
   it('rejects no-company user generating invite code', async () => {
     await expectError(
       () => clientC.conn.reducers.generateInviteCode({ maxUses: 1 }),
-      'must belong to a company'
+      'Not permitted'
     )
   })
 
   it('clientC joins Alpha Signs via invite code', async () => {
     await clientC.conn.reducers.joinCompany({ code: inviteCode })
-    await waitFor(() => myAccount(clientC)?.companyId != null)
+    await waitFor(() => myAccount(clientC)?.activeCompanyId != null)
     const acct = myAccount(clientC)!
-    expect(acct.companyId).toBe(companyAId)
-    expect(acct.role.tag).toBe('Member')
+    expect(acct.activeCompanyId).toBe(companyAId)
+    expect(myMembership(clientC)?.role.tag).toBe('Pending')
   })
 
   it('invite code uses decremented', async () => {
@@ -334,10 +376,8 @@ describe('4. Team Management', () => {
       newRole: { tag: 'Admin' },
     })
     await waitFor(() => {
-      const acct = getAccounts(clientA).find(
-        a => a.identity.toHexString() === clientC.identity.toHexString()
-      )
-      return acct?.role.tag === 'Admin'
+      const mem = membershipOf(clientA, clientC.identity.toHexString(), companyAId)
+      return mem?.role.tag === 'Admin'
     })
   })
 
@@ -348,7 +388,7 @@ describe('4. Team Management', () => {
           targetIdentity: clientA.identity,
           newRole: { tag: 'Member' },
         }),
-      'Only the owner'
+      'Cannot change the role of someone at or above your level'
     )
   })
 
@@ -378,13 +418,11 @@ describe('4. Team Management', () => {
     await clientA.conn.reducers.transferOwnership({
       newOwnerIdentity: clientC.identity,
     })
-    await waitFor(() => myAccount(clientA)?.role.tag === 'Admin')
-    expect(myAccount(clientA)!.role.tag).toBe('Admin')
+    await waitFor(() => myMembership(clientA, companyAId)?.role.tag === 'Admin')
+    expect(myMembership(clientA, companyAId)!.role.tag).toBe('Admin')
     await waitFor(() => {
-      const acct = getAccounts(clientA).find(
-        a => a.identity.toHexString() === clientC.identity.toHexString()
-      )
-      return acct?.role.tag === 'Owner'
+      const mem = membershipOf(clientA, clientC.identity.toHexString(), companyAId)
+      return mem?.role.tag === 'Owner'
     })
   })
 
@@ -392,7 +430,7 @@ describe('4. Team Management', () => {
     await clientC.conn.reducers.transferOwnership({
       newOwnerIdentity: clientA.identity,
     })
-    await waitFor(() => myAccount(clientA)?.role.tag === 'Owner')
+    await waitFor(() => myMembership(clientA, companyAId)?.role.tag === 'Owner')
   })
 
   it('clientA removes clientC from company', async () => {
@@ -400,10 +438,8 @@ describe('4. Team Management', () => {
       colleagueIdentity: clientC.identity,
     })
     await waitFor(() => {
-      const acct = getAccounts(clientA).find(
-        a => a.identity.toHexString() === clientC.identity.toHexString()
-      )
-      return acct?.companyId == null
+      const mem = membershipOf(clientA, clientC.identity.toHexString(), companyAId)
+      return mem === undefined
     })
   })
 
@@ -470,7 +506,7 @@ describe('5. Profile & Company Settings', () => {
           isPublic: false,
           kvkNumber: '',
         }),
-      'must belong to a company'
+      'Not permitted'
     )
   })
 
@@ -811,7 +847,7 @@ describe('8. Ghosting & Block', () => {
           (c.companyA === companyBId && c.companyB === companyAId))
     )!
     expect(conn).toBeDefined()
-    expect(conn.blockedBy).toBeDefined()
+    expect(conn.blockingCompanyId).toBeDefined()
   })
 
   it('ghosting: clientA requests connection — silently succeeds', async () => {
@@ -1001,7 +1037,7 @@ describe('9. Permission Checks', () => {
             slug: 'fail-co',
             location: 'Nowhere',
           }),
-        'Create an account first'
+        'Account not found'
       )
     } finally {
       fresh.disconnect()
@@ -1015,7 +1051,7 @@ describe('9. Permission Checks', () => {
           targetCompanyId: companyBId,
           message: '',
         }),
-      'must belong to a company'
+      'Not permitted'
     )
   })
 
@@ -1117,16 +1153,533 @@ describe('9. Permission Checks', () => {
           connectionId: conn.id,
           text: 'Intruder',
         }),
-      'must belong to a company'
+      'Not permitted'
     )
 
-    // Clean up
-    await clientA.conn.reducers.cancelRequest({
+    // Clean up — accept the connection (we need it for project tests)
+    await clientB.conn.reducers.acceptConnection({
+      targetCompanyId: companyAId,
+    })
+    await waitFor(() => {
+      const c = getConnections(clientA).find(cc => cc.id === conn.id)
+      return c?.status.tag === 'Accepted'
+    })
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 10. NOTIFICATIONS
+// ═════════════════════════════════════════════════════════════════════════════
+describe('10. Notifications', () => {
+  it('notifications were generated from earlier actions', async () => {
+    await sleep(300)
+    // clientA should have notifications from various actions (connection requests, etc.)
+    const notifs = getNotifications(clientA)
+    // At minimum, the accepted connection should have generated a notification
+    expect(notifs.length).toBeGreaterThan(0)
+  })
+
+  it('clientA marks a notification as read', async () => {
+    const notif = getNotifications(clientA).find(n => !n.isRead)!
+    expect(notif).toBeDefined()
+    const notifId = notif.id
+
+    await clientA.conn.reducers.markNotificationRead({ notificationId: notifId })
+    await waitFor(() => {
+      const n = getNotifications(clientA).find(nn => nn.id === notifId)
+      return n?.isRead === true
+    })
+  })
+
+  it('clientA marks all notifications read', async () => {
+    await sleep(300)
+    const myIdentityHex = clientA.identity.toHexString()
+    const myUnreadBefore = getNotifications(clientA).filter(
+      n => n.companyId === companyAId && !n.isRead &&
+        n.recipientIdentity.toHexString() === myIdentityHex
+    )
+    await clientA.conn.reducers.markAllNotificationsRead({ companyId: companyAId })
+    if (myUnreadBefore.length === 0) {
+      // Nothing to mark, just confirm no error
+      return
+    }
+    await waitFor(() => {
+      const unread = getNotifications(clientA).filter(
+        n => n.companyId === companyAId && !n.isRead &&
+          n.recipientIdentity.toHexString() === myIdentityHex
+      )
+      return unread.length === 0
+    })
+  })
+
+  it('clientA clears read notifications', async () => {
+    const myIdentityHex = clientA.identity.toHexString()
+    const readBefore = getNotifications(clientA).filter(
+      n => n.companyId === companyAId && n.isRead &&
+        n.recipientIdentity.toHexString() === myIdentityHex
+    ).length
+    // Only clears if there are read notifications
+    if (readBefore > 0) {
+      await clientA.conn.reducers.clearNotifications({ companyId: companyAId })
+      await waitFor(() => {
+        const readAfter = getNotifications(clientA).filter(
+          n => n.companyId === companyAId && n.isRead &&
+            n.recipientIdentity.toHexString() === myIdentityHex
+        ).length
+        return readAfter < readBefore
+      })
+    }
+  })
+
+  it('rejects marking someone else notification as read', async () => {
+    // Generate a notification for clientB by having A send a chat
+    const conn = getConnections(clientA).find(
+      c =>
+        c.status.tag === 'Accepted' &&
+        ((c.companyA === companyAId && c.companyB === companyBId) ||
+          (c.companyA === companyBId && c.companyB === companyAId))
+    )!
+    await clientA.conn.reducers.sendConnectionChat({
+      connectionId: conn.id,
+      text: 'Notification test msg',
+    })
+    await waitFor(() => getNotifications(clientB).some(n => !n.isRead))
+    const bNotif = getNotifications(clientB).find(n => !n.isRead)!
+
+    await expectError(
+      () => clientA.conn.reducers.markNotificationRead({ notificationId: bNotif.id }),
+      'Not your notification'
+    )
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 11. PROJECT LIFECYCLE
+// ═════════════════════════════════════════════════════════════════════════════
+describe('11. Project Lifecycle', () => {
+  let projectId: bigint
+
+  it('clientA creates a project', async () => {
+    const projectsBefore = getProjects(clientA).length
+    await clientA.conn.reducers.createProject({
+      name: 'Hospital Utrecht Signage',
+      description: 'Large hospital signage project',
+    })
+    await waitFor(() => getProjects(clientA).length > projectsBefore)
+    const project = getProjects(clientA).find(
+      p => p.name === 'Hospital Utrecht Signage'
+    )!
+    expect(project).toBeDefined()
+    expect(project.ownerCompanyId).toBe(companyAId)
+    expect(project.description).toBe('Large hospital signage project')
+    projectId = project.id
+
+    // Owner company auto-added as Accepted member
+    const members = getProjectMembers(clientA).filter(
+      m => m.projectId === projectId
+    )
+    expect(members.length).toBe(1)
+    expect(members[0].companyId).toBe(companyAId)
+    expect(members[0].status.tag).toBe('Accepted')
+  })
+
+  it('rejects empty project name', async () => {
+    await expectError(
+      () => clientA.conn.reducers.createProject({ name: '', description: 'test' }),
+      'Project name cannot be empty'
+    )
+  })
+
+  it('rejects project name too long', async () => {
+    await expectError(
+      () => clientA.conn.reducers.createProject({ name: 'X'.repeat(81), description: 'test' }),
+      'too long'
+    )
+  })
+
+  it('clientA invites clientB company to project', async () => {
+    const membersBefore = getProjectMembers(clientA).filter(
+      m => m.projectId === projectId
+    ).length
+    await clientA.conn.reducers.inviteToProject({
+      projectId,
       targetCompanyId: companyBId,
     })
-    await waitFor(
-      () =>
-        getConnections(clientA).find(c => c.id === conn.id) === undefined
+    await waitFor(() =>
+      getProjectMembers(clientA).filter(m => m.projectId === projectId).length > membersBefore
+    )
+    const invite = getProjectMembers(clientA).find(
+      m => m.projectId === projectId && m.companyId === companyBId
+    )!
+    expect(invite.status.tag).toBe('Invited')
+  })
+
+  it('rejects duplicate invite', async () => {
+    await expectError(
+      () => clientA.conn.reducers.inviteToProject({
+        projectId,
+        targetCompanyId: companyBId,
+      }),
+      'already been invited'
+    )
+  })
+
+  it('rejects inviting own company', async () => {
+    await expectError(
+      () => clientA.conn.reducers.inviteToProject({
+        projectId,
+        targetCompanyId: companyAId,
+      }),
+      'Cannot invite your own company'
+    )
+  })
+
+  it('clientB gets notification about project invite', async () => {
+    await waitFor(() =>
+      getNotifications(clientB).some(
+        n => n.notificationType.tag === 'ProjectInvite'
+      )
+    )
+    const notif = getNotifications(clientB).find(
+      n => n.notificationType.tag === 'ProjectInvite'
+    )!
+    expect(notif.body).toContain('Hospital Utrecht Signage')
+  })
+
+  it('clientB accepts project invite', async () => {
+    await clientB.conn.reducers.acceptProjectInvite({ projectId })
+    await waitFor(() => {
+      const m = getProjectMembers(clientB).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Accepted'
+    })
+  })
+
+  it('clientA gets notification about project accepted', async () => {
+    await waitFor(() =>
+      getNotifications(clientA).some(
+        n => n.notificationType.tag === 'ProjectAccepted'
+      )
+    )
+  })
+
+  it('clientA sends project chat', async () => {
+    const chatsBefore = getProjectChats(clientA).filter(
+      c => c.projectId === projectId
+    ).length
+    await clientA.conn.reducers.sendProjectChat({
+      projectId,
+      text: 'The permits are approved',
+    })
+    await waitFor(() =>
+      getProjectChats(clientA).filter(c => c.projectId === projectId).length > chatsBefore
+    )
+    const chat = getProjectChats(clientA).find(
+      c => c.projectId === projectId && c.text === 'The permits are approved'
+    )!
+    expect(chat.sender.toHexString()).toBe(clientA.identity.toHexString())
+  })
+
+  it('clientB sees the project chat', async () => {
+    await waitFor(() =>
+      getProjectChats(clientB).some(
+        c => c.projectId === projectId && c.text === 'The permits are approved'
+      )
+    )
+  })
+
+  it('clientB sends project chat reply', async () => {
+    await clientB.conn.reducers.sendProjectChat({
+      projectId,
+      text: 'Great, we will start production',
+    })
+    await waitFor(() =>
+      getProjectChats(clientB).some(
+        c => c.projectId === projectId && c.text === 'Great, we will start production'
+      )
+    )
+  })
+
+  it('clientA gets notification about project chat', async () => {
+    await waitFor(() =>
+      getNotifications(clientA).some(
+        n => n.notificationType.tag === 'ProjectChat'
+      )
+    )
+  })
+
+  it('rejects empty project chat', async () => {
+    await expectError(
+      () => clientA.conn.reducers.sendProjectChat({ projectId, text: '' }),
+      'cannot be empty'
+    )
+  })
+
+  it('rejects project chat too long', async () => {
+    await expectError(
+      () => clientA.conn.reducers.sendProjectChat({ projectId, text: 'X'.repeat(501) }),
+      'too long'
+    )
+  })
+
+  it('clientA kicks clientB from project', async () => {
+    await clientA.conn.reducers.kickFromProject({
+      projectId,
+      targetCompanyId: companyBId,
+    })
+    await waitFor(() => {
+      const m = getProjectMembers(clientA).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Kicked'
+    })
+  })
+
+  it('clientB gets notification about being kicked', async () => {
+    await waitFor(() =>
+      getNotifications(clientB).some(
+        n => n.notificationType.tag === 'ProjectKicked'
+      )
+    )
+  })
+
+  it('re-invite after kick cleans up old row', async () => {
+    await clientA.conn.reducers.inviteToProject({
+      projectId,
+      targetCompanyId: companyBId,
+    })
+    await waitFor(() => {
+      const m = getProjectMembers(clientA).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Invited'
+    })
+    // Accept again for leave test
+    await clientB.conn.reducers.acceptProjectInvite({ projectId })
+    await waitFor(() => {
+      const m = getProjectMembers(clientB).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Accepted'
+    })
+  })
+
+  it('clientB leaves project', async () => {
+    await clientB.conn.reducers.leaveProject({ projectId })
+    await waitFor(() => {
+      const m = getProjectMembers(clientB).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Left'
+    })
+  })
+
+  it('clientA gets notification about company leaving', async () => {
+    await waitFor(() =>
+      getNotifications(clientA).some(
+        n => n.notificationType.tag === 'ProjectLeft'
+      )
+    )
+  })
+
+  it('re-invite after leave works', async () => {
+    await clientA.conn.reducers.inviteToProject({
+      projectId,
+      targetCompanyId: companyBId,
+    })
+    await waitFor(() => {
+      const m = getProjectMembers(clientA).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Invited'
+    })
+    // Decline this time
+    await clientB.conn.reducers.declineProjectInvite({ projectId })
+    await waitFor(() => {
+      const m = getProjectMembers(clientB).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m === undefined
+    })
+  })
+
+  it('clientA gets notification about project declined', async () => {
+    await waitFor(() =>
+      getNotifications(clientA).some(
+        n => n.notificationType.tag === 'ProjectDeclined'
+      )
+    )
+  })
+
+  it('clientA deletes the project', async () => {
+    await clientA.conn.reducers.deleteProject({ projectId })
+    await waitFor(() =>
+      getProjects(clientA).find(p => p.id === projectId) === undefined
+    )
+    // All members and chats cascade-deleted
+    const members = getProjectMembers(clientA).filter(m => m.projectId === projectId)
+    expect(members.length).toBe(0)
+    const chats = getProjectChats(clientA).filter(c => c.projectId === projectId)
+    expect(chats.length).toBe(0)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 12. PROJECT SECURITY
+// ═════════════════════════════════════════════════════════════════════════════
+describe('12. Project Security', () => {
+  let projectId: bigint
+
+  it('setup: create a project for security tests', async () => {
+    await clientA.conn.reducers.createProject({
+      name: 'Security Test Project',
+      description: 'For permission testing',
+    })
+    await waitFor(() =>
+      getProjects(clientA).some(p => p.name === 'Security Test Project')
+    )
+    projectId = getProjects(clientA).find(
+      p => p.name === 'Security Test Project'
+    )!.id
+  })
+
+  it('no-company user cannot create project', async () => {
+    await expectError(
+      () => clientC.conn.reducers.createProject({ name: 'Fail', description: 'fail' }),
+      'Not permitted'
+    )
+  })
+
+  it('non-owner cannot invite to project', async () => {
+    // clientB is not the owner of this project
+    await expectError(
+      () => clientB.conn.reducers.inviteToProject({
+        projectId,
+        targetCompanyId: companyAId,
+      }),
+      'Only the owner company can invite'
+    )
+  })
+
+  it('invite requires accepted connection', async () => {
+    // Disconnect A and B first, then try to invite
+    await clientA.conn.reducers.disconnectCompany({ targetCompanyId: companyBId })
+    await waitFor(() =>
+      getConnections(clientA).find(
+        c =>
+          c.status.tag === 'Accepted' &&
+          ((c.companyA === companyAId && c.companyB === companyBId) ||
+            (c.companyA === companyBId && c.companyB === companyAId))
+      ) === undefined
+    )
+    await expectError(
+      () => clientA.conn.reducers.inviteToProject({
+        projectId,
+        targetCompanyId: companyBId,
+      }),
+      'accepted connection'
+    )
+    // Re-establish connection for subsequent tests
+    await clientA.conn.reducers.requestConnection({
+      targetCompanyId: companyBId,
+      message: '',
+    })
+    await waitFor(() =>
+      getConnections(clientB).some(
+        c =>
+          c.status.tag === 'Pending' &&
+          ((c.companyA === companyAId && c.companyB === companyBId) ||
+            (c.companyA === companyBId && c.companyB === companyAId))
+      )
+    )
+    await clientB.conn.reducers.acceptConnection({ targetCompanyId: companyAId })
+    await waitFor(() =>
+      getConnections(clientA).some(
+        c =>
+          c.status.tag === 'Accepted' &&
+          ((c.companyA === companyAId && c.companyB === companyBId) ||
+            (c.companyA === companyBId && c.companyB === companyAId))
+      )
+    )
+  })
+
+  it('non-member cannot send project chat', async () => {
+    // clientB is not a member of this project
+    await expectError(
+      () => clientB.conn.reducers.sendProjectChat({
+        projectId,
+        text: 'Intruder message',
+      }),
+      'not a member'
+    )
+  })
+
+  it('non-owner cannot kick from project', async () => {
+    // Invite and accept B first so they are a member
+    await clientA.conn.reducers.inviteToProject({
+      projectId,
+      targetCompanyId: companyBId,
+    })
+    await waitFor(() =>
+      getProjectMembers(clientA).some(
+        m => m.projectId === projectId && m.companyId === companyBId && m.status.tag === 'Invited'
+      )
+    )
+    await clientB.conn.reducers.acceptProjectInvite({ projectId })
+    await waitFor(() => {
+      const m = getProjectMembers(clientB).find(
+        mm => mm.projectId === projectId && mm.companyId === companyBId
+      )
+      return m?.status.tag === 'Accepted'
+    })
+
+    // clientB (non-owner) tries to kick A
+    await expectError(
+      () => clientB.conn.reducers.kickFromProject({
+        projectId,
+        targetCompanyId: companyAId,
+      }),
+      'Only the owner company can kick'
+    )
+  })
+
+  it('owner cannot kick self', async () => {
+    await expectError(
+      () => clientA.conn.reducers.kickFromProject({
+        projectId,
+        targetCompanyId: companyAId,
+      }),
+      'Cannot kick your own company'
+    )
+  })
+
+  it('owner cannot leave (must delete)', async () => {
+    await expectError(
+      () => clientA.conn.reducers.leaveProject({ projectId }),
+      'Owner company cannot leave'
+    )
+  })
+
+  it('non-owner cannot delete project', async () => {
+    await expectError(
+      () => clientB.conn.reducers.deleteProject({ projectId }),
+      'Only the owner company can delete'
+    )
+  })
+
+  it('no pending invitation — cannot accept', async () => {
+    // clientC has no company, but even with a company they have no invite
+    await expectError(
+      () => clientC.conn.reducers.acceptProjectInvite({ projectId }),
+      'Not permitted'
+    )
+  })
+
+  it('cleanup: delete security test project', async () => {
+    await clientA.conn.reducers.deleteProject({ projectId })
+    await waitFor(() =>
+      getProjects(clientA).find(p => p.id === projectId) === undefined
     )
   })
 })

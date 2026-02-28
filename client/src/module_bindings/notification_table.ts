@@ -9,12 +9,20 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import {
+  NotificationType,
+} from "./types";
+
 
 export default __t.row({
-  identity: __t.identity().primaryKey(),
-  fullName: __t.string().name("full_name"),
-  nickname: __t.string(),
-  email: __t.string(),
-  activeCompanyId: __t.option(__t.u64()).name("active_company_id"),
+  id: __t.u64().primaryKey(),
+  recipientIdentity: __t.identity().name("recipient_identity"),
+  companyId: __t.u64().name("company_id"),
+  get notificationType() {
+    return NotificationType.name("notification_type");
+  },
+  title: __t.string(),
+  body: __t.string(),
+  isRead: __t.bool().name("is_read"),
   createdAt: __t.timestamp().name("created_at"),
 });

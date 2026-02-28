@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useState, useEffect, useRef, useMemo, type FormEvent } from 'react'
 import { useTable, useReducer } from 'spacetimedb/react'
 import { Identity } from 'spacetimedb'
 import { tables, reducers } from './module_bindings'
 import { useIdentity, toHex } from './hooks/useIdentity'
 import { useFormAction } from './hooks/useFormAction'
-import type { UserAccount, Company } from './module_bindings/types'
+import type { UserAccount, Company, CompanyMember, Notification, Project, ProjectMember, ProjectChat } from './module_bindings/types'
 
 const TOKEN_KEY = 'stdb_token'
 
@@ -34,33 +34,82 @@ function AuthenticatedApp() {
   const myAccount = accounts.find(a => toHex(a.identity) === identityHex)
 
   const [allCompanies] = useTable(tables.company)
-  const myCompany = myAccount?.companyId != null
-    ? allCompanies.find(c => c.id === myAccount.companyId)
+  const [allMembers] = useTable(tables.company_member)
+
+  // Derive my memberships and companies
+  const myMemberships = allMembers.filter(m => toHex(m.identity) === identityHex)
+  const myCompanies = myMemberships
+    .map(m => allCompanies.find(c => c.id === m.companyId))
+    .filter((c): c is Company => c != null)
+
+  const activeCompanyId = myAccount?.activeCompanyId
+  const myCompany = activeCompanyId != null
+    ? allCompanies.find(c => c.id === activeCompanyId)
+    : undefined
+  const myMembership = activeCompanyId != null
+    ? myMemberships.find(m => m.companyId === activeCompanyId)
     : undefined
 
   const [onlineUsers] = useTable(tables.online_user)
   const onlineCount = onlineUsers.filter(u => u.online).length
 
-  // Demo user setup
-  const createAccount = useReducer(reducers.createAccount)
-  const createCompany = useReducer(reducers.createCompany)
-  const { error: demoError, loading: demoLoading, run: demoRun } = useFormAction()
+  // Auto-switch: if active company is null but user has memberships, switch to first
+  const switchActiveCompany = useReducer(reducers.switchActiveCompany)
+  useEffect(() => {
+    if (myAccount && myAccount.activeCompanyId == null && myMemberships.length > 0) {
+      switchActiveCompany({ companyId: myMemberships[0].companyId }).catch(() => {
+        // Silently ignore — subscription update will retry
+      })
+    }
+  }, [myAccount?.activeCompanyId, myMemberships.length])
 
-  const handleDemo = (variant: 'A' | 'B') => {
-    const isA = variant === 'A'
-    demoRun(async () => {
-      await createAccount({
-        fullName: isA ? 'Alice van Dijk' : 'Bob Jansen',
-        nickname: isA ? 'Alice' : 'Bob',
-        email: isA ? 'alice@alphasigns.test' : 'bob@betasigns.test',
-      })
-      await createCompany({
-        name: isA ? 'Alpha Signs' : 'Beta Signs',
-        slug: isA ? 'alpha-signs' : 'beta-signs',
-        location: isA ? 'Amsterdam, NL' : 'Rotterdam, NL',
-      })
-    }, 'Demo account created')
-  }
+  // ── Notifications & toasts ──
+  const [allNotifications] = useTable(tables.notification)
+  const myNotifications = allNotifications.filter(n => toHex(n.recipientIdentity) === identityHex)
+  const activeNotifications = activeCompanyId != null
+    ? myNotifications.filter(n => n.companyId === activeCompanyId)
+    : []
+  const unreadCount = activeNotifications.filter(n => !n.isRead).length
+
+  const [toasts, setToasts] = useState<Array<{ id: string; title: string; body: string }>>([])
+  const prevNotifIdsRef = useRef<Set<string>>(new Set())
+  const initialLoadRef = useRef(true)
+
+  useEffect(() => {
+    const currentIds = new Set(myNotifications.map(n => String(n.id)))
+
+    // On first render, capture existing IDs without toasting
+    if (initialLoadRef.current) {
+      prevNotifIdsRef.current = currentIds
+      initialLoadRef.current = false
+      return
+    }
+
+    // Find newly arrived unread notifications
+    const newNotifs = myNotifications.filter(
+      n => !prevNotifIdsRef.current.has(String(n.id)) && !n.isRead
+    )
+
+    if (newNotifs.length > 0) {
+      setToasts(prev => [
+        ...prev,
+        ...newNotifs.map(n => ({
+          id: `toast-${String(n.id)}-${Date.now()}`,
+          title: n.title,
+          body: n.body,
+        })),
+      ])
+    }
+
+    prevNotifIdsRef.current = currentIds
+  }, [myNotifications])
+
+  // Auto-dismiss toasts after 5 seconds
+  useEffect(() => {
+    if (toasts.length === 0) return
+    const timer = setTimeout(() => setToasts(prev => prev.slice(1)), 5000)
+    return () => clearTimeout(timer)
+  }, [toasts])
 
   const handleSignOut = () => {
     localStorage.removeItem(TOKEN_KEY)
@@ -74,6 +123,12 @@ function AuthenticatedApp() {
       <span>{identityHex ? 'Connected' : 'Connecting...'}</span>
       {' | '}
       <span>{onlineCount} online</span>
+      {myAccount && activeCompanyId != null && (
+        <>
+          {' | '}
+          <NotificationBell notifications={activeNotifications} companyId={activeCompanyId} />
+        </>
+      )}
       {myAccount && (
         <>
           {' | '}
@@ -82,7 +137,40 @@ function AuthenticatedApp() {
           <button onClick={handleSignOut}>Sign out</button>
         </>
       )}
+      {myCompanies.length > 1 && myCompany && activeCompanyId != null && (
+        <>
+          {' | '}
+          <CompanySwitcher
+            myCompanies={myCompanies}
+            myMemberships={myMemberships}
+            activeCompanyId={activeCompanyId}
+          />
+        </>
+      )}
       <hr />
+    </div>
+  )
+
+  // ── Toast overlay ──
+  const toastOverlay = toasts.length > 0 && (
+    <div style={{
+      position: 'fixed', top: 16, right: 16, zIndex: 9999,
+      display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 350,
+    }}>
+      {toasts.map(toast => (
+        <div key={toast.id} style={{
+          background: '#333', color: 'white', padding: '12px 16px',
+          borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          position: 'relative',
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: 2 }}>{toast.title}</div>
+          <div style={{ fontSize: 13, opacity: 0.9 }}>{toast.body}</div>
+          <button
+            onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+            style={{ position: 'absolute', top: 4, right: 8, background: 'none', border: 'none', color: 'white', cursor: 'pointer', fontSize: 16 }}
+          >x</button>
+        </div>
+      ))}
     </div>
   )
 
@@ -91,27 +179,19 @@ function AuthenticatedApp() {
   if (!myAccount) {
     return (
       <div>
+        {toastOverlay}
         {statusBar}
         <SignUpSection />
-        <hr />
-        <h3>Quick Demo Setup</h3>
-        <button onClick={() => handleDemo('A')} disabled={demoLoading}>
-          {demoLoading ? 'Setting up...' : 'Demo User A — Alpha Signs'}
-        </button>
-        {' '}
-        <button onClick={() => handleDemo('B')} disabled={demoLoading}>
-          {demoLoading ? 'Setting up...' : 'Demo User B — Beta Signs'}
-        </button>
-        {demoError && <p style={{ color: 'red' }}>{demoError}</p>}
       </div>
     )
   }
 
-  // ── No company → create or join ──
+  // ── No memberships → create or join ──
 
-  if (myAccount.companyId === undefined || myAccount.companyId === null) {
+  if (myMemberships.length === 0) {
     return (
       <div>
+        {toastOverlay}
         {statusBar}
         <h2>Join or Create a Company</h2>
         {companyMode === 'choose' && (
@@ -133,9 +213,10 @@ function AuthenticatedApp() {
 
   // ── Waiting for company data ──
 
-  if (!myCompany) {
+  if (!myCompany || !myMembership) {
     return (
       <div>
+        {toastOverlay}
         {statusBar}
         <p>Loading company data...</p>
       </div>
@@ -144,24 +225,257 @@ function AuthenticatedApp() {
 
   // ── Full Dashboard ──
 
-  const roleTag = myAccount.role.tag
-  const canManage = roleTag !== 'Member' && roleTag !== 'Field'
+  const roleTag = myMembership.role.tag
+  const canManage = roleTag === 'Admin' || roleTag === 'Owner'
+  const isPending = roleTag === 'Pending'
+
+  // Pending users see a limited view until activated
+  if (isPending) {
+    return (
+      <div>
+        {toastOverlay}
+        {statusBar}
+        <h1>{myCompany.name}</h1>
+        <p>@{myCompany.slug} — {myCompany.location}</p>
+        <ProfileSection account={myAccount} membership={myMembership} />
+        <hr />
+        <div style={{ border: '2px solid orange', padding: 12, marginTop: 8 }}>
+          <h2>Awaiting Activation</h2>
+          <p>Your account is pending approval. An admin or owner of <strong>{myCompany.name}</strong> must activate your account before you can access company features.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
+      {toastOverlay}
       {statusBar}
 
       <h1>{myCompany.name}</h1>
       <p>@{myCompany.slug} — {myCompany.location}</p>
 
-      <ProfileSection account={myAccount} />
+      <ProfileSection account={myAccount} membership={myMembership} />
+      {myCompanies.length > 0 && activeCompanyId != null && (
+        <>
+          <hr />
+          <MyCompaniesSection
+            myCompanies={myCompanies}
+            myMemberships={myMemberships}
+            activeCompanyId={activeCompanyId}
+          />
+        </>
+      )}
+      <hr />
+      <TeamSection company={myCompany} myRole={roleTag} isMe={isMe} allMembers={allMembers} />
       <hr />
       {canManage && <CompanySettingsSection company={myCompany} />}
       {canManage && <><hr /><CapabilitiesSection companyId={myCompany.id} /></>}
-      <hr />
-      <TeamSection company={myCompany} myRole={roleTag} isMe={isMe} />
       {canManage && <><hr /><InviteCodesSection companyId={myCompany.id} /></>}
       {canManage && <><hr /><ConnectionsSection company={myCompany} /></>}
+
+      <hr />
+      <ProjectsSection company={myCompany} canManage={canManage} />
+
+      <hr />
+      <details>
+        <summary>Join Another Company</summary>
+        <div style={{ marginTop: 8 }}>
+          <JoinCompanySection onBack={() => {}} />
+        </div>
+      </details>
+    </div>
+  )
+}
+
+// ── Notification Bell ──────────────────────────────────────
+
+function NotificationBell({ notifications, companyId }: {
+  notifications: Notification[]
+  companyId: bigint
+}) {
+  const markRead = useReducer(reducers.markNotificationRead)
+  const markAllRead = useReducer(reducers.markAllNotificationsRead)
+  const clearAll = useReducer(reducers.clearNotifications)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  const sorted = [...notifications].sort(
+    (a, b) => Number(b.createdAt?.microsSinceUnixEpoch ?? 0n) - Number(a.createdAt?.microsSinceUnixEpoch ?? 0n)
+  )
+  const unread = sorted.filter(n => !n.isRead)
+  const hasRead = sorted.some(n => n.isRead)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{ position: 'relative', cursor: 'pointer', background: 'none', border: '1px solid #ccc', padding: '2px 8px' }}
+      >
+        Bell{unread.length > 0 && (
+          <span style={{
+            position: 'absolute', top: -8, right: -8,
+            background: 'red', color: 'white', borderRadius: '50%',
+            fontSize: 11, fontWeight: 'bold', minWidth: 18, height: 18,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            padding: '0 4px',
+          }}>
+            {unread.length > 99 ? '99+' : unread.length}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: '100%', zIndex: 1000,
+          background: 'white', border: '1px solid #ccc', boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+          width: 320, maxHeight: 400, overflowY: 'auto',
+        }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong>Notifications</strong>
+            <span>
+              {unread.length > 0 && (
+                <button onClick={() => markAllRead({ companyId }).catch(() => {})} style={{ fontSize: 12, marginRight: 4 }}>Mark all read</button>
+              )}
+              {hasRead && (
+                <button onClick={() => { clearAll({ companyId }).catch(() => {}); setOpen(false) }} style={{ fontSize: 12 }}>Clear read</button>
+              )}
+            </span>
+          </div>
+
+          {sorted.length === 0 ? (
+            <div style={{ padding: 16, textAlign: 'center', color: '#888' }}>No notifications</div>
+          ) : (
+            sorted.map(n => (
+              <div
+                key={String(n.id)}
+                onClick={() => { if (!n.isRead) markRead({ notificationId: n.id }).catch(() => {}) }}
+                style={{
+                  padding: '8px 12px', borderBottom: '1px solid #f0f0f0',
+                  cursor: n.isRead ? 'default' : 'pointer',
+                  background: n.isRead ? 'white' : '#f0f7ff',
+                }}
+              >
+                <div style={{ fontWeight: n.isRead ? 'normal' : 'bold', fontSize: 13 }}>{n.title}</div>
+                <div style={{ fontSize: 12, color: '#555' }}>{n.body}</div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </span>
+  )
+}
+
+// ── Company Switcher ──────────────────────────────────────
+
+function CompanySwitcher({ myCompanies, myMemberships, activeCompanyId }: {
+  myCompanies: Company[]
+  myMemberships: CompanyMember[]
+  activeCompanyId: bigint
+}) {
+  const switchCompany = useReducer(reducers.switchActiveCompany)
+  const { error, run } = useFormAction()
+
+  return (
+    <span>
+      <select
+        value={String(activeCompanyId)}
+        onChange={e => run(() => switchCompany({ companyId: BigInt(e.target.value) }))}
+      >
+        {myCompanies.map(c => {
+          const membership = myMemberships.find(m => m.companyId === c.id)
+          return (
+            <option key={String(c.id)} value={String(c.id)}>
+              {c.name} ({membership?.role?.tag ?? 'Member'})
+            </option>
+          )
+        })}
+      </select>
+      {error && <span style={{ color: 'red' }}> {error}</span>}
+    </span>
+  )
+}
+
+// ── My Companies ──────────────────────────────────────────
+
+function MyCompaniesSection({ myCompanies, myMemberships, activeCompanyId }: {
+  myCompanies: Company[]
+  myMemberships: CompanyMember[]
+  activeCompanyId: bigint
+}) {
+  const switchCompany = useReducer(reducers.switchActiveCompany)
+  const leaveCompany = useReducer(reducers.leaveCompany)
+  const { error, loading, run } = useFormAction()
+  const [confirmLeaveId, setConfirmLeaveId] = useState<bigint | null>(null)
+
+  return (
+    <div>
+      <h2>My Companies ({myCompanies.length})</h2>
+      <table border={1} cellPadding={4}>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Location</th>
+            <th>Your Role</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {myCompanies.map(c => {
+            const mem = myMemberships.find(m => m.companyId === c.id)
+            const roleTag = mem?.role?.tag ?? 'Member'
+            const isActive = c.id === activeCompanyId
+            return (
+              <tr key={String(c.id)} style={isActive ? { fontWeight: 'bold' } : undefined}>
+                <td>{c.name}{isActive ? ' (active)' : ''}</td>
+                <td>{c.location}</td>
+                <td>{roleTag}</td>
+                <td>
+                  {!isActive && (
+                    <button onClick={() => switchCompany({ companyId: c.id })} disabled={loading}>
+                      Switch to
+                    </button>
+                  )}
+                  {roleTag !== 'Owner' && (
+                    <>
+                      {' '}
+                      {confirmLeaveId === c.id ? (
+                        <span>
+                          <strong>Leave {c.name}?</strong>{' '}
+                          <button onClick={() => {
+                            setConfirmLeaveId(null)
+                            // Switch to this company first if not active, then leave
+                            run(async () => {
+                              if (!isActive) await switchCompany({ companyId: c.id })
+                              await leaveCompany()
+                            }, `Left ${c.name}`)
+                          }} disabled={loading}>Confirm</button>
+                          {' '}
+                          <button onClick={() => setConfirmLeaveId(null)}>Cancel</button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmLeaveId(c.id)} disabled={loading}>Leave</button>
+                      )}
+                    </>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+      {error && <p style={{ color: 'red' }}>{error}</p>}
     </div>
   )
 }
@@ -293,12 +607,10 @@ function JoinCompanySection({ onBack }: { onBack: () => void }) {
 
 // ── Profile ────────────────────────────────────────────────
 
-function ProfileSection({ account }: { account: UserAccount }) {
+function ProfileSection({ account, membership }: { account: UserAccount; membership: CompanyMember }) {
   const updateProfile = useReducer(reducers.updateProfile)
-  const leaveCompany = useReducer(reducers.leaveCompany)
   const { error, success, loading, run } = useFormAction()
   const [editing, setEditing] = useState(false)
-  const [confirmLeave, setConfirmLeave] = useState(false)
   const [fullName, setFullName] = useState(account.fullName)
   const [nickname, setNickname] = useState(account.nickname)
   const [email, setEmail] = useState(account.email)
@@ -319,7 +631,7 @@ function ProfileSection({ account }: { account: UserAccount }) {
   return (
     <div>
       <h2>Your Profile</h2>
-      <p>Role: <strong>{account.role.tag}</strong></p>
+      <p>Role: <strong>{membership.role.tag}</strong></p>
       {!editing ? (
         <div>
           <p>Name: {account.fullName}</p>
@@ -336,20 +648,6 @@ function ProfileSection({ account }: { account: UserAccount }) {
           {' '}
           <button onClick={() => setEditing(false)}>Cancel</button>
         </div>
-      )}
-      {account.role.tag !== 'Owner' && account.companyId != null && (
-        !confirmLeave ? (
-          <button onClick={() => setConfirmLeave(true)}>Leave Company</button>
-        ) : (
-          <div style={{ border: '2px solid red', padding: 8, marginTop: 8 }}>
-            <p><strong>Leave company?</strong> You will lose access and need a new invite to rejoin.</p>
-            <button onClick={() => { run(() => leaveCompany(), 'Left company'); setConfirmLeave(false) }} disabled={loading}>
-              {loading ? 'Leaving...' : 'Confirm Leave'}
-            </button>
-            {' '}
-            <button onClick={() => setConfirmLeave(false)}>Cancel</button>
-          </div>
-        )
       )}
       {error && <p style={{ color: 'red' }}>{error}</p>}
       {success && <p style={{ color: 'green' }}>{success}</p>}
@@ -452,9 +750,9 @@ function CapabilitiesSection({ companyId }: { companyId: bigint }) {
 
 // ── Team Management ────────────────────────────────────────
 
-function TeamSection({ company, myRole, isMe }: { company: Company; myRole: string; isMe: (id: unknown) => boolean }) {
+function TeamSection({ company, myRole, isMe, allMembers }: { company: Company; myRole: string; isMe: (id: unknown) => boolean; allMembers: CompanyMember[] }) {
   const [allAccounts] = useTable(tables.user_account)
-  const teamMembers = allAccounts.filter(a => a.companyId === company.id)
+  const companyMembers = allMembers.filter(m => m.companyId === company.id)
   const [onlineUsers] = useTable(tables.online_user)
 
   const removeColleague = useReducer(reducers.removeColleague)
@@ -465,7 +763,8 @@ function TeamSection({ company, myRole, isMe }: { company: Company; myRole: stri
   const [confirmAction, setConfirmAction] = useState<{ type: 'transfer' | 'remove'; identity: unknown; name: string } | null>(null)
 
   const isOwner = myRole === 'Owner'
-  const canManage = myRole !== 'Member' && myRole !== 'Field'
+  const isAdmin = myRole === 'Admin'
+  const canManage = isOwner || isAdmin
 
   const isOnline = (memberIdentity: unknown): boolean => {
     const hex = toHex(memberIdentity)
@@ -475,7 +774,7 @@ function TeamSection({ company, myRole, isMe }: { company: Company; myRole: stri
   const handleRoleChange = (memberIdentity: unknown, newRoleTag: string) => {
     run(() => updateUserRole({
       targetIdentity: memberIdentity as Identity,
-      newRole: { tag: newRoleTag } as { tag: 'Admin' } | { tag: 'Member' } | { tag: 'Field' },
+      newRole: { tag: newRoleTag } as { tag: 'Admin' } | { tag: 'Member' } | { tag: 'Installer' } | { tag: 'Field' } | { tag: 'Pending' },
     }), 'Role updated')
   }
 
@@ -489,59 +788,87 @@ function TeamSection({ company, myRole, isMe }: { company: Company; myRole: stri
     setConfirmAction(null)
   }
 
-  return (
-    <div>
-      <h2>Team ({teamMembers.length})</h2>
-      <table border={1} cellPadding={4}>
-        <thead>
-          <tr>
-            <th>Status</th>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Role</th>
-            {canManage && <th>Actions</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {teamMembers.map(member => {
-            const memberRoleTag = member.role?.tag ?? 'Member'
-            const isSelf = isMe(member.identity)
-            return (
-              <tr key={toHex(member.identity)}>
-                <td>{isOnline(member.identity) ? '🟢' : '⚪'}</td>
-                <td>{member.nickname || member.fullName}{isSelf ? ' (you)' : ''}</td>
-                <td>{member.email}</td>
-                <td>
-                  {isOwner && !isSelf && memberRoleTag !== 'Owner' ? (
-                    <select value={memberRoleTag} onChange={e => handleRoleChange(member.identity, e.target.value)} disabled={loading}>
+  // Join membership with account data
+  const teamData = companyMembers.map(m => ({
+    membership: m,
+    account: allAccounts.find(a => toHex(a.identity) === toHex(m.identity)),
+  })).filter(t => t.account != null) as { membership: CompanyMember; account: UserAccount }[]
+
+  const internalTeam = teamData.filter(t => t.membership.role?.tag !== 'Installer' && t.membership.role?.tag !== 'Pending')
+  const hires = teamData.filter(t => t.membership.role?.tag === 'Installer')
+  const pending = teamData.filter(t => t.membership.role?.tag === 'Pending')
+
+  const renderMemberRow = ({ membership: mem, account: acct }: { membership: CompanyMember; account: UserAccount }) => {
+    const memberRoleTag = mem.role?.tag ?? 'Member'
+    const isSelf = isMe(mem.identity)
+    const displayName = acct.nickname || acct.fullName
+    return (
+      <tr key={toHex(mem.identity)}>
+        <td>{isOnline(mem.identity) ? '🟢' : '⚪'}</td>
+        <td>{displayName}{isSelf ? ' (you)' : ''}</td>
+        <td>{acct.email}</td>
+        <td>
+          {canManage && !isSelf && memberRoleTag !== 'Owner' && (
+            memberRoleTag === 'Pending'
+              ? <button onClick={() => handleRoleChange(mem.identity, 'Member')} disabled={loading}>Activate</button>
+              : (memberRoleTag === 'Installer' || memberRoleTag === 'Field')
+                ? <select value={memberRoleTag} onChange={e => handleRoleChange(mem.identity, e.target.value)} disabled={loading}>
+                    <option value="Installer">Installer</option>
+                    <option value="Field">Field</option>
+                  </select>
+                : isOwner
+                  ? <select value={memberRoleTag} onChange={e => handleRoleChange(mem.identity, e.target.value)} disabled={loading}>
                       <option value="Admin">Admin</option>
                       <option value="Member">Member</option>
-                      <option value="Field">Field</option>
                     </select>
-                  ) : (
-                    memberRoleTag
-                  )}
-                </td>
-                {canManage && (
-                  <td>
-                    {isOwner && !isSelf && (
-                      <button onClick={() => setConfirmAction({ type: 'transfer', identity: member.identity, name: member.nickname || member.fullName })} disabled={loading}>
-                        Transfer Ownership
-                      </button>
-                    )}
-                    {' '}
-                    {canManage && !isSelf && (memberRoleTag === 'Member' || memberRoleTag === 'Field' || isOwner) && memberRoleTag !== 'Owner' && (
-                      <button onClick={() => setConfirmAction({ type: 'remove', identity: member.identity, name: member.nickname || member.fullName })} disabled={loading}>
-                        Remove
-                      </button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+                  : null
+          )}
+          {' '}{memberRoleTag}
+        </td>
+        {canManage && (
+          <td>
+            {isOwner && !isSelf && memberRoleTag !== 'Pending' && memberRoleTag !== 'Installer' && memberRoleTag !== 'Field' && (
+              <button onClick={() => setConfirmAction({ type: 'transfer', identity: mem.identity, name: displayName })} disabled={loading}>
+                Transfer Ownership
+              </button>
+            )}
+            {' '}
+            {canManage && !isSelf && (memberRoleTag === 'Pending' || memberRoleTag === 'Member' || memberRoleTag === 'Field' || memberRoleTag === 'Installer' || isOwner) && memberRoleTag !== 'Owner' && (
+              <button onClick={() => setConfirmAction({ type: 'remove', identity: mem.identity, name: displayName })} disabled={loading}>
+                Remove
+              </button>
+            )}
+          </td>
+        )}
+      </tr>
+    )
+  }
+
+  const renderTable = (rows: typeof teamData) => (
+    <table border={1} cellPadding={4}>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Role</th>
+          {canManage && <th>Actions</th>}
+        </tr>
+      </thead>
+      <tbody>{rows.map(renderMemberRow)}</tbody>
+    </table>
+  )
+
+  return (
+    <div>
+      <h2>Team ({internalTeam.length})</h2>
+      {internalTeam.length > 0 ? renderTable(internalTeam) : <p>No team members yet.</p>}
+
+      <h2 style={{ marginTop: 16 }}>Hires ({hires.length})</h2>
+      {hires.length > 0 ? renderTable(hires) : <p>No external hires yet.</p>}
+
+      <h2 style={{ marginTop: 16 }}>Pending ({pending.length})</h2>
+      {pending.length > 0 ? renderTable(pending) : <p>No pending members.</p>}
 
       {error && <p style={{ color: 'red' }}>{error}</p>}
       {success && <p style={{ color: 'green' }}>{success}</p>}
@@ -614,6 +941,7 @@ function ConnectionsSection({ company }: { company: Company }) {
 
   const [allConnections] = useTable(tables.company_connection)
   const connections = allConnections.filter(c => c.companyA === company.id || c.companyB === company.id)
+  const [allMembers] = useTable(tables.company_member)
 
   const [allCompanies] = useTable(tables.company)
   const [allAccounts] = useTable(tables.user_account)
@@ -665,8 +993,8 @@ function ConnectionsSection({ company }: { company: Company }) {
     conn.companyA === company.id ? conn.companyB : conn.companyA
 
   const isRequestingCompany = (conn: typeof connections[0]) => {
-    const requester = allAccounts.find(a => toHex(a.identity) === toHex(conn.requestedBy))
-    return requester?.companyId === company.id
+    // Check if the requester has a membership in our company
+    return allMembers.some(m => toHex(m.identity) === toHex(conn.requestedBy) && m.companyId === company.id)
   }
 
   const getCompanyName = (id: bigint) => allCompanies.find(c => c.id === id)?.name ?? `Company #${id}`
@@ -745,7 +1073,7 @@ function ConnectionsSection({ company }: { company: Company }) {
           </p>
         ))}
         <div ref={chatEndRef} />
-        <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSendChat(conn.id)} placeholder="Type a message..." />
+        <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && chatInput.trim()) handleSendChat(conn.id) }} placeholder="Type a message..." />
         {' '}
         <button onClick={() => handleSendChat(conn.id)} disabled={loading || !chatInput.trim()}>Send</button>
       </div>
@@ -770,8 +1098,10 @@ function ConnectionsSection({ company }: { company: Company }) {
                 <button onClick={() => run(() => declineConnection({ targetCompanyId: getOtherCompanyId(conn) }), 'Declined')} disabled={loading}>Decline</button>
                 {' '}
                 <button onClick={() => run(() => blockCompany({ targetCompanyId: getOtherCompanyId(conn) }), 'Blocked')} disabled={loading}>Block</button>
-                {' '}
-                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)}>Chat</button>
+                {' | '}
+                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)} style={{ fontWeight: 'bold' }}>
+                  {expandedChat === conn.id ? 'Close Chat' : 'Open Chat'}
+                </button>
                 {renderChat(conn)}
               </li>
             ))}
@@ -791,8 +1121,10 @@ function ConnectionsSection({ company }: { company: Company }) {
                 <button onClick={() => run(() => disconnectCompany({ targetCompanyId: getOtherCompanyId(conn) }), 'Disconnected')} disabled={loading}>Disconnect</button>
                 {' '}
                 <button onClick={() => run(() => blockCompany({ targetCompanyId: getOtherCompanyId(conn) }), 'Blocked')} disabled={loading}>Block</button>
-                {' '}
-                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)}>Chat</button>
+                {' | '}
+                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)} style={{ fontWeight: 'bold' }}>
+                  {expandedChat === conn.id ? 'Close Chat' : 'Open Chat'}
+                </button>
                 {renderChat(conn)}
               </li>
             ))}
@@ -810,8 +1142,10 @@ function ConnectionsSection({ company }: { company: Company }) {
                 <strong>{getCompanyName(getOtherCompanyId(conn))}</strong> — Pending
                 {' '}
                 <button onClick={() => run(() => cancelRequest({ targetCompanyId: getOtherCompanyId(conn) }), 'Cancelled')} disabled={loading}>Cancel</button>
-                {' '}
-                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)}>Chat</button>
+                {' | '}
+                <button onClick={() => setExpandedChat(expandedChat === conn.id ? null : conn.id)} style={{ fontWeight: 'bold' }}>
+                  {expandedChat === conn.id ? 'Close Chat' : 'Open Chat'}
+                </button>
                 {renderChat(conn)}
               </li>
             ))}
@@ -863,13 +1197,16 @@ function ConnectionsSection({ company }: { company: Company }) {
                   <strong>{c.name}</strong> — {c.location}
                   {' '}
                   {requestTargetId === c.id ? (
-                    <span>
-                      <input value={requestMessage} onChange={e => setRequestMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSendRequest(c.id) }} placeholder="Message (optional)" autoFocus />
+                    <div style={{ display: 'inline-block', marginTop: 4 }}>
+                      <p style={{ margin: '4px 0' }}>Send a message with your request, or just connect directly.</p>
+                      <input value={requestMessage} onChange={e => setRequestMessage(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSendRequest(c.id) }} placeholder="Write a message..." autoFocus />
                       {' '}
-                      <button onClick={() => handleSendRequest(c.id)} disabled={loading}>Send</button>
+                      <button onClick={() => handleSendRequest(c.id)} disabled={loading}>
+                        {requestMessage.trim() ? 'Send with Message' : 'Just Connect'}
+                      </button>
                       {' '}
                       <button onClick={() => { setRequestTargetId(null); setRequestMessage('') }}>Cancel</button>
-                    </span>
+                    </div>
                   ) : (
                     <button onClick={() => setRequestTargetId(c.id)} disabled={loading}>Connect</button>
                   )}
@@ -879,6 +1216,420 @@ function ConnectionsSection({ company }: { company: Company }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// ── Projects Section ──────────────────────────────────────
+
+function ProjectsSection({ company, canManage }: { company: Company; canManage: boolean }) {
+  const { identityHex } = useIdentity()
+
+  const [allProjects] = useTable(tables.project)
+  const [allProjectMembers] = useTable(tables.project_member)
+  const [allProjectChats] = useTable(tables.project_chat)
+  const [allCompanies] = useTable(tables.company)
+  const [allMembers] = useTable(tables.company_member)
+  const [allAccounts] = useTable(tables.user_account)
+  const [allConnections] = useTable(tables.company_connection)
+
+  const createProject = useReducer(reducers.createProject)
+  const inviteToProject = useReducer(reducers.inviteToProject)
+  const acceptProjectInvite = useReducer(reducers.acceptProjectInvite)
+  const declineProjectInvite = useReducer(reducers.declineProjectInvite)
+  const sendProjectChat = useReducer(reducers.sendProjectChat)
+  const leaveProject = useReducer(reducers.leaveProject)
+  const kickFromProject = useReducer(reducers.kickFromProject)
+  const deleteProject = useReducer(reducers.deleteProject)
+  const { error, success, loading, run } = useFormAction()
+
+  const [view, setView] = useState<'list' | 'create' | 'detail'>('list')
+  const [selectedProjectId, setSelectedProjectId] = useState<bigint | null>(null)
+  const [chatInput, setChatInput] = useState('')
+  const [createName, setCreateName] = useState('')
+  const [createDesc, setCreateDesc] = useState('')
+  const [inviteTargetId, setInviteTargetId] = useState<bigint | null>(null)
+  const chatEndRef = useRef<HTMLDivElement>(null)
+
+  // My company's project memberships
+  const myProjectMemberships = allProjectMembers.filter(m => m.companyId === company.id)
+  const pendingInvites = myProjectMemberships.filter(m => m.status.tag === 'Invited')
+  const acceptedMemberships = myProjectMemberships.filter(m => m.status.tag === 'Accepted')
+
+  // Projects I'm a member of (Accepted)
+  const myProjects = acceptedMemberships
+    .map(m => allProjects.find(p => p.id === m.projectId))
+    .filter((p): p is Project => p != null)
+
+  // Projects I'm invited to
+  const invitedProjects = pendingInvites
+    .map(m => allProjects.find(p => p.id === m.projectId))
+    .filter((p): p is Project => p != null)
+
+  // Selected project detail
+  const selectedProject = selectedProjectId != null
+    ? allProjects.find(p => p.id === selectedProjectId)
+    : undefined
+  const selectedMembers = selectedProjectId != null
+    ? allProjectMembers.filter(m => m.projectId === selectedProjectId)
+    : []
+  const selectedChats = selectedProjectId != null
+    ? [...allProjectChats.filter(c => c.projectId === selectedProjectId)]
+        .sort((a, b) => Number(a.createdAt?.microsSinceUnixEpoch ?? 0n) - Number(b.createdAt?.microsSinceUnixEpoch ?? 0n))
+    : []
+  const acceptedMembers = selectedMembers.filter(m => m.status.tag === 'Accepted')
+  const isOwner = selectedProject?.ownerCompanyId === company.id
+
+  // Build sender lookup map: identityHex -> { companyName, nickname }
+  const senderMap = useMemo(() => {
+    const map = new Map<string, { companyName: string; nickname: string }>()
+    for (const pm of acceptedMembers) {
+      const comp = allCompanies.find(c => c.id === pm.companyId)
+      const companyName = comp?.name ?? 'Unknown'
+      // Find all members of this company
+      const compMembers = allMembers.filter(m => m.companyId === pm.companyId)
+      for (const cm of compMembers) {
+        const hex = toHex(cm.identity)
+        if (!map.has(hex)) {
+          const acc = allAccounts.find(a => toHex(a.identity) === hex)
+          map.set(hex, { companyName, nickname: acc?.nickname ?? 'Unknown' })
+        }
+      }
+    }
+    return map
+  }, [acceptedMembers.length, allMembers.length, allCompanies.length, allAccounts.length])
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [selectedChats.length])
+
+  const getCompanyName = (id: bigint) =>
+    allCompanies.find(c => c.id === id)?.name ?? 'Unknown'
+
+  const handleCreate = () => {
+    run(async () => {
+      await createProject({ name: createName, description: createDesc })
+      setCreateName('')
+      setCreateDesc('')
+      setView('list')
+    }, 'Project created')
+  }
+
+  const handleSendChat = () => {
+    if (!chatInput.trim() || selectedProjectId == null) return
+    const text = chatInput
+    setChatInput('')
+    run(async () => {
+      try {
+        await sendProjectChat({ projectId: selectedProjectId, text })
+      } catch (err) {
+        // Restore message on failure so the user doesn't lose it
+        setChatInput(text)
+        throw err
+      }
+    })
+  }
+
+  // Companies available for invitation: accepted connections not already in the project
+  const invitableCompanies = selectedProjectId != null
+    ? allConnections
+        .filter(c => c.status.tag === 'Accepted' && (c.companyA === company.id || c.companyB === company.id))
+        .map(c => c.companyA === company.id ? c.companyB : c.companyA)
+        .filter(cid => !selectedMembers.some(m => m.companyId === cid && (m.status.tag === 'Accepted' || m.status.tag === 'Invited')))
+        .map(cid => allCompanies.find(c => c.id === cid))
+        .filter((c): c is Company => c != null)
+    : []
+
+  // ── Pending invitations banner ──
+  const inviteBanner = invitedProjects.length > 0 && (
+    <div style={{ border: '2px solid #4a90d9', padding: 12, marginBottom: 12 }}>
+      <h3>Pending Project Invitations</h3>
+      {invitedProjects.map(p => (
+        <div key={String(p.id)} style={{ marginBottom: 8 }}>
+          <strong>{p.name}</strong> — from {getCompanyName(p.ownerCompanyId)}
+          {p.description && <div style={{ fontSize: 13, color: '#555' }}>{p.description}</div>}
+          {canManage ? (
+            <div style={{ marginTop: 4 }}>
+              <button
+                onClick={() => run(() => acceptProjectInvite({ projectId: p.id }), 'Invitation accepted')}
+                disabled={loading}
+              >{loading ? 'Processing...' : 'Accept'}</button>
+              {' '}
+              <button
+                onClick={() => run(() => declineProjectInvite({ projectId: p.id }), 'Invitation declined')}
+                disabled={loading}
+              >{loading ? 'Processing...' : 'Decline'}</button>
+            </div>
+          ) : (
+            <div style={{ marginTop: 4, fontSize: 13, color: '#888' }}>
+              An admin must accept or decline this invitation.
+            </div>
+          )}
+        </div>
+      ))}
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {success && <p style={{ color: 'green' }}>{success}</p>}
+    </div>
+  )
+
+  // ── Create form ──
+  if (view === 'create') {
+    return (
+      <div>
+        <h2>Projects</h2>
+        <h3>Create New Project</h3>
+        <div>
+          <input
+            value={createName}
+            onChange={e => setCreateName(e.target.value)}
+            placeholder="Project name"
+            maxLength={80}
+          />
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <textarea
+            value={createDesc}
+            onChange={e => setCreateDesc(e.target.value)}
+            placeholder="Description (optional)"
+            maxLength={500}
+            rows={3}
+            style={{ width: '100%', maxWidth: 400 }}
+          />
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <button onClick={handleCreate} disabled={loading || !createName.trim()}>
+            {loading ? 'Creating...' : 'Create Project'}
+          </button>
+          {' '}
+          <button onClick={() => setView('list')}>Cancel</button>
+        </div>
+        {error && <p style={{ color: 'red' }}>{error}</p>}
+      </div>
+    )
+  }
+
+  // ── Project detail view — stale check ──
+  if (view === 'detail' && !selectedProject && selectedProjectId != null) {
+    return (
+      <div>
+        <h2>Projects</h2>
+        <p>This project is no longer available. It may have been deleted.</p>
+        <button onClick={() => { setView('list'); setSelectedProjectId(null) }}>&larr; Back to projects</button>
+      </div>
+    )
+  }
+
+  // ── Project detail view ──
+  if (view === 'detail' && selectedProject) {
+    return (
+      <div>
+        <h2>Projects</h2>
+        <button onClick={() => { setView('list'); setSelectedProjectId(null) }}>&larr; Back to projects</button>
+
+        <h3>{selectedProject.name}</h3>
+        {selectedProject.description && <p style={{ color: '#555' }}>{selectedProject.description}</p>}
+        <p style={{ fontSize: 13, color: '#888' }}>
+          Owner: {getCompanyName(selectedProject.ownerCompanyId)}
+          {isOwner && ' (you)'}
+        </p>
+
+        {/* Members */}
+        <h4>Members ({acceptedMembers.length})</h4>
+        <ul>
+          {acceptedMembers.map(m => (
+            <li key={String(m.id)}>
+              {getCompanyName(m.companyId)}
+              {m.companyId === selectedProject.ownerCompanyId && ' (owner)'}
+              {m.companyId === company.id && ' (you)'}
+              {isOwner && canManage && m.companyId !== company.id && (
+                <>
+                  {' '}
+                  <button
+                    onClick={() => {
+                      if (confirm(`Remove ${getCompanyName(m.companyId)} from this project?`)) {
+                        run(() => kickFromProject({ projectId: selectedProject.id, targetCompanyId: m.companyId }), 'Company removed')
+                      }
+                    }}
+                    disabled={loading}
+                    style={{ fontSize: 12 }}
+                  >Kick</button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        {/* Invited (pending) members */}
+        {selectedMembers.filter(m => m.status.tag === 'Invited').length > 0 && (
+          <>
+            <h4>Invited</h4>
+            <ul>
+              {selectedMembers.filter(m => m.status.tag === 'Invited').map(m => (
+                <li key={String(m.id)}>{getCompanyName(m.companyId)} — pending</li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {/* Invite new company (owner only) */}
+        {isOwner && canManage && (
+          <div style={{ marginTop: 8 }}>
+            <h4>Invite Company</h4>
+            {invitableCompanies.length === 0 ? (
+              <p style={{ fontSize: 13, color: '#888' }}>No connected companies available to invite.</p>
+            ) : (
+              <div>
+                <select
+                  value={inviteTargetId != null ? String(inviteTargetId) : ''}
+                  onChange={e => setInviteTargetId(e.target.value ? BigInt(e.target.value) : null)}
+                >
+                  <option value="">Select a company...</option>
+                  {invitableCompanies.map(c => (
+                    <option key={String(c.id)} value={String(c.id)}>{c.name}</option>
+                  ))}
+                </select>
+                {' '}
+                <button
+                  onClick={() => {
+                    if (inviteTargetId != null) {
+                      const targetId = inviteTargetId
+                      run(async () => {
+                        await inviteToProject({ projectId: selectedProject.id, targetCompanyId: targetId })
+                        setInviteTargetId(null)
+                      }, 'Invitation sent')
+                    }
+                  }}
+                  disabled={loading || inviteTargetId == null}
+                >Invite</button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Chat */}
+        <h4>Chat</h4>
+        <div style={{ border: '1px solid #ddd', maxHeight: 300, overflowY: 'auto', padding: 8, marginBottom: 8 }}>
+          {selectedChats.length === 0 ? (
+            <p style={{ color: '#888', textAlign: 'center' }}>No messages yet.</p>
+          ) : (
+            selectedChats.map(msg => {
+              const sender = senderMap.get(toHex(msg.sender))
+              const isMyMsg = toHex(msg.sender) === identityHex
+              return (
+                <div key={String(msg.id)} style={{ marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', color: isMyMsg ? '#2a7ae2' : '#333' }}>
+                    [{sender?.companyName ?? '?'}] {sender?.nickname ?? '?'}:
+                  </span>{' '}
+                  <span>{msg.text}</span>
+                </div>
+              )
+            })
+          )}
+          <div ref={chatEndRef} />
+        </div>
+        <div>
+          <input
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && chatInput.trim()) handleSendChat() }}
+            placeholder="Type a message..."
+            style={{ width: '60%' }}
+          />
+          {' '}
+          <button onClick={handleSendChat} disabled={loading || !chatInput.trim()}>Send</button>
+        </div>
+        {error && <p style={{ color: 'red', fontSize: 13, marginTop: 4 }}>{error}</p>}
+
+        {/* Actions — admin+ only */}
+        {canManage && (
+          <div style={{ marginTop: 16 }}>
+            {isOwner ? (
+              <button
+                onClick={() => {
+                  if (confirm(`Delete project "${selectedProject.name}"? This cannot be undone.`)) {
+                    run(async () => {
+                      await deleteProject({ projectId: selectedProject.id })
+                      setView('list')
+                      setSelectedProjectId(null)
+                    }, 'Project deleted')
+                  }
+                }}
+                disabled={loading}
+                style={{ color: 'red' }}
+              >Delete Project</button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (confirm(`Leave project "${selectedProject.name}"?`)) {
+                    run(async () => {
+                      await leaveProject({ projectId: selectedProject.id })
+                      setView('list')
+                      setSelectedProjectId(null)
+                    }, 'Left project')
+                  }
+                }}
+                disabled={loading}
+              >Leave Project</button>
+            )}
+          </div>
+        )}
+
+        {error && <p style={{ color: 'red' }}>{error}</p>}
+        {success && <p style={{ color: 'green' }}>{success}</p>}
+      </div>
+    )
+  }
+
+  // ── Project list view (default) ──
+  return (
+    <div>
+      <h2>Projects</h2>
+
+      {inviteBanner}
+
+      {canManage && (
+        <button onClick={() => setView('create')} style={{ marginBottom: 12 }}>
+          + Create Project
+        </button>
+      )}
+
+      {myProjects.length === 0 ? (
+        <p>No active projects. {canManage ? 'Create one or wait for invitations.' : 'Wait for project invitations from your admin.'}</p>
+      ) : (
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ccc', padding: 4 }}>Project</th>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ccc', padding: 4 }}>Owner</th>
+              <th style={{ textAlign: 'center', borderBottom: '1px solid #ccc', padding: 4 }}>Members</th>
+              <th style={{ borderBottom: '1px solid #ccc', padding: 4 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {myProjects.map(p => {
+              const memberCount = allProjectMembers.filter(
+                m => m.projectId === p.id && m.status.tag === 'Accepted'
+              ).length
+              return (
+                <tr key={String(p.id)}>
+                  <td style={{ padding: 4 }}>{p.name}</td>
+                  <td style={{ padding: 4 }}>{getCompanyName(p.ownerCompanyId)}</td>
+                  <td style={{ padding: 4, textAlign: 'center' }}>{memberCount}</td>
+                  <td style={{ padding: 4 }}>
+                    <button onClick={() => { setSelectedProjectId(p.id); setView('detail') }}>
+                      View
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {success && <p style={{ color: 'green' }}>{success}</p>}
     </div>
   )
 }

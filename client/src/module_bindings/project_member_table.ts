@@ -9,12 +9,18 @@ import {
   type AlgebraicTypeType as __AlgebraicTypeType,
   type Infer as __Infer,
 } from "spacetimedb";
+import {
+  ProjectMemberStatus,
+} from "./types";
+
 
 export default __t.row({
-  identity: __t.identity().primaryKey(),
-  fullName: __t.string().name("full_name"),
-  nickname: __t.string(),
-  email: __t.string(),
-  activeCompanyId: __t.option(__t.u64()).name("active_company_id"),
-  createdAt: __t.timestamp().name("created_at"),
+  id: __t.u64().primaryKey(),
+  projectId: __t.u64().name("project_id"),
+  companyId: __t.u64().name("company_id"),
+  get status() {
+    return ProjectMemberStatus;
+  },
+  invitedBy: __t.identity().name("invited_by"),
+  joinedAt: __t.timestamp().name("joined_at"),
 });

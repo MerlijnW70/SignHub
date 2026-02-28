@@ -5,13 +5,17 @@ use spacetimedb::{Identity, ReducerContext, SpacetimeType, Table, Timestamp};
 // Types
 // ---------------------------------------------------------------------------
 
-/// Four-tier role hierarchy: Owner > Admin > Member > Field.
+/// Six-tier role hierarchy: Owner > Admin > Member > Installer > Field > Pending.
+/// Users who join via invite code start as Pending until activated by
+/// an Admin or Owner.
 #[derive(SpacetimeType, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum UserRole {
     Owner,
     Admin,
     Member,
+    Installer,
     Field,
+    Pending,
 }
 
 /// Status of a connection between two companies.
@@ -20,6 +24,33 @@ pub enum ConnectionStatus {
     Pending,
     Accepted,
     Blocked,
+}
+
+/// Types of in-app notifications.
+#[derive(SpacetimeType, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum NotificationType {
+    MemberJoined,
+    ConnectionRequest,
+    ConnectionAccepted,
+    ConnectionDeclined,
+    ChatMessage,
+    RoleChanged,
+    MemberRemoved,
+    ProjectInvite,
+    ProjectAccepted,
+    ProjectDeclined,
+    ProjectChat,
+    ProjectKicked,
+    ProjectLeft,
+}
+
+/// Status of a company's membership in a project room.
+#[derive(SpacetimeType, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ProjectMemberStatus {
+    Invited,
+    Accepted,
+    Left,
+    Kicked,
 }
 
 // ---------------------------------------------------------------------------
@@ -35,20 +66,34 @@ pub struct OnlineUser {
 }
 
 /// A registered user account. Every connected identity that completes sign-up
-/// gets one row here.
-#[spacetimedb::table(
-    accessor = user_account, public,
-    index(accessor = account_by_company, btree(columns = [company_id]))
-)]
+/// gets one row here. The `active_company_id` tracks which company the user
+/// is currently operating as (they may belong to multiple via `CompanyMember`).
+#[spacetimedb::table(accessor = user_account, public)]
 pub struct UserAccount {
     #[primary_key]
     pub identity: Identity,
     pub full_name: String,
     pub nickname: String,
     pub email: String,
-    pub company_id: Option<u64>,
-    pub role: UserRole,
+    pub active_company_id: Option<u64>,
     pub created_at: Timestamp,
+}
+
+/// Many-to-many mapping between users and companies. A user can belong to
+/// multiple companies, each with an independent role.
+#[spacetimedb::table(
+    accessor = company_member, public,
+    index(accessor = member_by_company, btree(columns = [company_id])),
+    index(accessor = member_by_identity, btree(columns = [identity]))
+)]
+pub struct CompanyMember {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub identity: Identity,
+    pub company_id: u64,
+    pub role: UserRole,
+    pub joined_at: Timestamp,
 }
 
 /// A sign-shop / company in the directory.
@@ -127,6 +172,84 @@ pub struct ConnectionChat {
     pub created_at: Timestamp,
 }
 
+/// Records that a user has used a specific invite code. Prevents reuse of the
+/// same code by the same user after leaving and rejoining.
+#[spacetimedb::table(
+    accessor = used_invite_code,
+    index(accessor = used_by_identity, btree(columns = [identity]))
+)]
+pub struct UsedInviteCode {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub identity: Identity,
+    pub code: String,
+    pub company_id: u64,
+}
+
+/// In-app notifications. Each row targets a specific user within a company context.
+#[spacetimedb::table(
+    accessor = notification, public,
+    index(accessor = notif_by_recipient, btree(columns = [recipient_identity]))
+)]
+pub struct Notification {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub recipient_identity: Identity,
+    pub company_id: u64,
+    pub notification_type: NotificationType,
+    pub title: String,
+    pub body: String,
+    pub is_read: bool,
+    pub created_at: Timestamp,
+}
+
+/// A project room where 3+ companies collaborate on a job.
+#[spacetimedb::table(accessor = project, public)]
+pub struct Project {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub owner_company_id: u64,
+    pub name: String,
+    pub description: String,
+    pub created_by: Identity,
+    pub created_at: Timestamp,
+}
+
+/// Tracks which companies are members of which projects.
+#[spacetimedb::table(
+    accessor = project_member, public,
+    index(accessor = pm_by_project, btree(columns = [project_id])),
+    index(accessor = pm_by_company, btree(columns = [company_id]))
+)]
+pub struct ProjectMember {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub project_id: u64,
+    pub company_id: u64,
+    pub status: ProjectMemberStatus,
+    pub invited_by: Identity,
+    pub joined_at: Timestamp,
+}
+
+/// Chat messages within a project room.
+#[spacetimedb::table(
+    accessor = project_chat, public,
+    index(accessor = pchat_by_project, btree(columns = [project_id]))
+)]
+pub struct ProjectChat {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub project_id: u64,
+    pub sender: Identity,
+    pub text: String,
+    pub created_at: Timestamp,
+}
+
 // ---------------------------------------------------------------------------
 // Validation helpers
 // ---------------------------------------------------------------------------
@@ -142,6 +265,8 @@ const MAX_BIO: usize = 500;
 const MAX_KVK_NUMBER: usize = 20;
 const MAX_INVITE_CODE: usize = 25;
 const MAX_MESSAGE: usize = 500;
+const MAX_PROJECT_NAME: usize = 80;
+const MAX_PROJECT_DESCRIPTION: usize = 500;
 
 /// Validates that a trimmed string does not exceed `max_len` characters.
 fn validate_length(value: &str, field: &str, max_len: usize) -> Result<(), String> {
@@ -222,6 +347,18 @@ fn normalize_slug(raw: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+/// Truncates a string to at most `max_chars` characters (Unicode-safe)
+/// and appends "..." if truncated.
+fn truncate_preview(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
 /// Formats an Identity for logging (first 12 hex chars).
 fn id_short(identity: Identity) -> String {
     let hex = identity.to_hex().to_string();
@@ -233,28 +370,163 @@ fn id_short(identity: Identity) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Notification helpers
+// ---------------------------------------------------------------------------
+
+/// Insert a notification for a single recipient.
+fn notify(
+    ctx: &ReducerContext,
+    recipient: Identity,
+    company_id: u64,
+    notification_type: NotificationType,
+    title: String,
+    body: String,
+) {
+    ctx.db.notification().insert(Notification {
+        id: 0,
+        recipient_identity: recipient,
+        company_id,
+        notification_type,
+        title,
+        body,
+        is_read: false,
+        created_at: ctx.timestamp,
+    });
+}
+
+/// Insert a notification for all members of a company with at least `min_role`,
+/// optionally excluding a specific identity (typically the actor).
+fn notify_company_role(
+    ctx: &ReducerContext,
+    company_id: u64,
+    min_role: UserRole,
+    exclude: Option<Identity>,
+    notification_type: NotificationType,
+    title: String,
+    body: String,
+) {
+    let recipients: Vec<Identity> = ctx
+        .db
+        .company_member()
+        .member_by_company()
+        .filter(&company_id)
+        .filter(|m| role_level(m.role) >= role_level(min_role))
+        .filter(|m| exclude != Some(m.identity))
+        .map(|m| m.identity)
+        .collect();
+
+    for recipient in recipients {
+        notify(ctx, recipient, company_id, notification_type, title.clone(), body.clone());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Project helpers
+// ---------------------------------------------------------------------------
+
+fn find_project_membership(
+    ctx: &ReducerContext,
+    project_id: u64,
+    company_id: u64,
+    status: ProjectMemberStatus,
+) -> Option<ProjectMember> {
+    ctx.db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .find(|m| m.company_id == company_id && m.status == status)
+}
+
+fn delete_project_cascade(ctx: &ReducerContext, project_id: u64) {
+    // 1. Delete all chat messages
+    let chat_ids: Vec<u64> = ctx
+        .db
+        .project_chat()
+        .pchat_by_project()
+        .filter(&project_id)
+        .map(|c| c.id)
+        .collect();
+    for id in chat_ids {
+        ctx.db.project_chat().id().delete(id);
+    }
+
+    // 2. Delete all members
+    let member_ids: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .map(|m| m.id)
+        .collect();
+    for id in member_ids {
+        ctx.db.project_member().id().delete(id);
+    }
+
+    // 3. Delete notifications for this project (project_id stored in company_id field won't match,
+    //    but we can clean up by iterating — projects use their own notification types)
+
+    // 4. Delete the project row
+    ctx.db.project().id().delete(project_id);
+}
+
+// ---------------------------------------------------------------------------
 // Permission helpers
 // ---------------------------------------------------------------------------
 
 /// Returns a numeric level for role comparison. Higher = more privileged.
 const fn role_level(role: UserRole) -> u8 {
     match role {
-        UserRole::Field => 0,
-        UserRole::Member => 1,
-        UserRole::Admin => 2,
-        UserRole::Owner => 3,
+        UserRole::Pending => 0,
+        UserRole::Field => 1,
+        UserRole::Installer => 2,
+        UserRole::Member => 3,
+        UserRole::Admin => 4,
+        UserRole::Owner => 5,
     }
 }
 
-/// Retrieves the caller's account and verifies they have at least `min_role`.
-/// Returns the account and the `company_id` on success.
+/// Finds a user's membership in a specific company, if it exists.
+fn find_membership(
+    ctx: &ReducerContext,
+    identity: Identity,
+    company_id: u64,
+) -> Option<CompanyMember> {
+    ctx.db
+        .company_member()
+        .member_by_identity()
+        .filter(&identity)
+        .find(|m| m.company_id == company_id)
+}
+
+/// After removing a membership, update the user's `active_company_id` to the
+/// next available membership whose company still exists, or `None` if none remain.
+fn reassign_active_company(ctx: &ReducerContext, identity: Identity, removed_company_id: u64) {
+    if let Some(account) = ctx.db.user_account().identity().find(identity) {
+        if account.active_company_id == Some(removed_company_id) {
+            let next = ctx
+                .db
+                .company_member()
+                .member_by_identity()
+                .filter(&identity)
+                .find(|m| ctx.db.company().id().find(m.company_id).is_some());
+            ctx.db.user_account().identity().update(UserAccount {
+                active_company_id: next.map(|m| m.company_id),
+                ..account
+            });
+        }
+    }
+}
+
+/// Retrieves the caller's account and verifies they have at least `min_role`
+/// in their active company. Returns the account and the active company ID.
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// - The caller has no account.
-/// - The caller does not belong to a company.
-/// - The caller's role is below `min_role`.
+/// - The caller has no active company.
+/// - The caller has no membership in their active company.
+/// - The caller's role in that company is below `min_role`.
 fn require_role_at_least(
     ctx: &ReducerContext,
     min_role: UserRole,
@@ -267,14 +539,26 @@ fn require_role_at_least(
         .ok_or("Not permitted")?;
 
     let company_id = account
-        .company_id
+        .active_company_id
         .ok_or("Not permitted")?;
 
-    if role_level(account.role) < role_level(min_role) {
+    // Verify the company still exists
+    ctx.db
+        .company()
+        .id()
+        .find(company_id)
+        .ok_or("Not permitted")?;
+
+    let membership = find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("Not permitted")?;
+
+    if role_level(membership.role) < role_level(min_role) {
         return Err(match min_role {
             UserRole::Owner => "Only the owner can do this".to_string(),
             UserRole::Admin => "Only admins and owners can do this".to_string(),
-            UserRole::Member | UserRole::Field => "You do not have permission".to_string(),
+            UserRole::Member | UserRole::Installer | UserRole::Field | UserRole::Pending => {
+                "You do not have permission".to_string()
+            }
         });
     }
 
@@ -376,8 +660,7 @@ pub fn create_account(
         full_name,
         nickname,
         email,
-        company_id: None,
-        role: UserRole::Member,
+        active_company_id: None,
         created_at: ctx.timestamp,
     });
 
@@ -426,7 +709,7 @@ pub fn update_profile(
 /// # Errors
 ///
 /// Returns an error if any required field is empty, the slug is taken,
-/// the caller has no account, or the caller already belongs to a company.
+/// or the caller has no account.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn create_company(
@@ -453,10 +736,6 @@ pub fn create_company(
         .find(ctx.sender())
         .ok_or("Account not found")?;
 
-    if account.company_id.is_some() {
-        return Err("You already belong to a company".to_string());
-    }
-
     // Check slug uniqueness (unique constraint will also enforce this)
     if ctx.db.company().slug().find(&slug).is_some() {
         return Err("Slug is already taken".to_string());
@@ -482,10 +761,18 @@ pub fn create_company(
         has_bucket_truck: false,
     });
 
-    // Link user to company as owner
-    ctx.db.user_account().identity().update(UserAccount {
-        company_id: Some(company.id),
+    // Create membership as Owner
+    ctx.db.company_member().insert(CompanyMember {
+        id: 0,
+        identity: ctx.sender(),
+        company_id: company.id,
         role: UserRole::Owner,
+        joined_at: ctx.timestamp,
+    });
+
+    // Set as active company
+    ctx.db.user_account().identity().update(UserAccount {
+        active_company_id: Some(company.id),
         ..account
     });
 
@@ -525,12 +812,13 @@ pub fn generate_invite_code(ctx: &ReducerContext, max_uses: u32) -> Result<(), S
     Ok(())
 }
 
-/// User joins a company using an invite code.
+/// User joins a company using an invite code. Users can join multiple
+/// companies — each membership is independent with its own role.
 ///
 /// # Errors
 ///
-/// Returns an error if the caller has no account, already belongs to a company,
-/// the code is invalid, or the code has no remaining uses.
+/// Returns an error if the caller has no account, is already a member of
+/// this specific company, the code is invalid, or the code has no remaining uses.
 #[spacetimedb::reducer]
 #[allow(clippy::needless_pass_by_value)]
 pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
@@ -545,10 +833,6 @@ pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
         .find(ctx.sender())
         .ok_or("Account not found")?;
 
-    if account.company_id.is_some() {
-        return Err("You already belong to a company".to_string());
-    }
-
     let invite = ctx
         .db
         .invite_code()
@@ -556,16 +840,53 @@ pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
         .find(&code)
         .ok_or("Invalid invite code")?;
 
+    // Check not already a member of THIS company
+    if find_membership(ctx, ctx.sender(), invite.company_id).is_some() {
+        return Err("You are already a member of this company".to_string());
+    }
+
     if invite.uses_remaining == 0 {
         return Err("Invite code has been fully used".to_string());
     }
 
-    // Link user to the company as a member
-    ctx.db.user_account().identity().update(UserAccount {
-        company_id: Some(invite.company_id),
-        role: UserRole::Member,
-        ..account
+    // Check if this user has already used this specific code
+    let already_used = ctx
+        .db
+        .used_invite_code()
+        .used_by_identity()
+        .filter(&ctx.sender())
+        .any(|u| u.code == code);
+    if already_used {
+        return Err("You have already used this invite code".to_string());
+    }
+
+    // Record the usage before linking
+    ctx.db.used_invite_code().insert(UsedInviteCode {
+        id: 0,
+        identity: ctx.sender(),
+        code: code.clone(),
+        company_id: invite.company_id,
     });
+
+    // Create membership as Pending — an Admin or Owner must activate them
+    ctx.db.company_member().insert(CompanyMember {
+        id: 0,
+        identity: ctx.sender(),
+        company_id: invite.company_id,
+        role: UserRole::Pending,
+        joined_at: ctx.timestamp,
+    });
+
+    // Capture before potential move
+    let joiner_name = account.nickname.clone();
+
+    // Set as active company if user has no active company
+    if account.active_company_id.is_none() {
+        ctx.db.user_account().identity().update(UserAccount {
+            active_company_id: Some(invite.company_id),
+            ..account
+        });
+    }
 
     // Decrement uses (or delete if last use).
     // This is atomic: SpacetimeDB reducers are transactional, so the
@@ -578,6 +899,20 @@ pub fn join_company(ctx: &ReducerContext, code: String) -> Result<(), String> {
             ..invite
         });
     }
+
+    // Notify admins/owners that a new member joined
+    let company_name = ctx.db.company().id().find(invite.company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify_company_role(
+        ctx,
+        invite.company_id,
+        UserRole::Admin,
+        Some(ctx.sender()),
+        NotificationType::MemberJoined,
+        "New member joined".to_string(),
+        format!("{} joined {}", joiner_name, company_name),
+    );
 
     Ok(())
 }
@@ -617,7 +952,7 @@ pub fn delete_invite_code(ctx: &ReducerContext, code: String) -> Result<(), Stri
 /// # Errors
 ///
 /// Returns an error if the caller is below Admin role, the colleague is not
-/// found, or the colleague already belongs to a company.
+/// found, or the colleague is already a member of this company.
 #[spacetimedb::reducer]
 pub fn add_colleague_by_identity(
     ctx: &ReducerContext,
@@ -625,33 +960,34 @@ pub fn add_colleague_by_identity(
 ) -> Result<(), String> {
     let (_caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
-    let colleague = ctx
-        .db
+    ctx.db
         .user_account()
         .identity()
         .find(colleague_identity)
         .ok_or("Colleague account not found")?;
 
-    if colleague.company_id.is_some() {
-        return Err("Cannot add this user".to_string());
+    if find_membership(ctx, colleague_identity, company_id).is_some() {
+        return Err("User is already a member of this company".to_string());
     }
 
-    ctx.db.user_account().identity().update(UserAccount {
-        company_id: Some(company_id),
+    ctx.db.company_member().insert(CompanyMember {
+        id: 0,
+        identity: colleague_identity,
+        company_id,
         role: UserRole::Member,
-        ..colleague
+        joined_at: ctx.timestamp,
     });
 
     Ok(())
 }
 
-/// Removes a user from the company. Admins can only remove Members and Field;
-/// Owners can remove anyone except themselves.
+/// Removes a user from the company. Admins can only remove Members, Field,
+/// and Pending; Owners can remove anyone except themselves.
 ///
 /// # Errors
 ///
 /// Returns an error if the caller tries to remove themselves, is below Admin
-/// role, the colleague is not found, is not in the same company, or has an
+/// role, the colleague is not a member of the same company, or has an
 /// equal or higher role than the caller.
 #[spacetimedb::reducer]
 pub fn remove_colleague(
@@ -662,29 +998,24 @@ pub fn remove_colleague(
         return Err("Cannot remove yourself".to_string());
     }
 
-    let (caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
-    let colleague = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(colleague_identity)
-        .ok_or("Colleague account not found")?;
+    let caller_membership = find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("Not permitted")?;
 
-    if colleague.company_id != Some(company_id) {
-        return Err("Colleague is not in your company".to_string());
-    }
+    let colleague_membership = find_membership(ctx, colleague_identity, company_id)
+        .ok_or("Colleague is not in your company")?;
 
     // Hierarchy: cannot remove someone with equal or higher role
-    if role_level(colleague.role) >= role_level(caller.role) {
+    if role_level(colleague_membership.role) >= role_level(caller_membership.role) {
         return Err("You can only remove members with a lower role than yours".to_string());
     }
 
-    ctx.db.user_account().identity().update(UserAccount {
-        company_id: None,
-        role: UserRole::Member,
-        ..colleague
-    });
+    // Delete the membership
+    ctx.db.company_member().id().delete(colleague_membership.id);
+
+    // If their active company was this one, reassign
+    reassign_active_company(ctx, colleague_identity, company_id);
 
     log::info!(
         "AUDIT: User {} of Company {} removed colleague {}",
@@ -693,16 +1024,29 @@ pub fn remove_colleague(
         id_short(colleague_identity)
     );
 
+    // Notify the removed colleague
+    let company_name = ctx.db.company().id().find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify(
+        ctx,
+        colleague_identity,
+        company_id,
+        NotificationType::MemberRemoved,
+        "Removed from company".to_string(),
+        format!("You were removed from {}", company_name),
+    );
+
     Ok(())
 }
 
-/// Voluntarily leave your current company. Owners must transfer ownership
+/// Voluntarily leave the active company. Owners must transfer ownership
 /// first — they cannot abandon a company.
 ///
 /// # Errors
 ///
-/// Returns an error if the caller has no account, does not belong to a
-/// company, or is the Owner.
+/// Returns an error if the caller has no account, has no active company,
+/// has no membership in that company, or is the Owner.
 #[spacetimedb::reducer]
 pub fn leave_company(ctx: &ReducerContext) -> Result<(), String> {
     let account = ctx
@@ -712,17 +1056,53 @@ pub fn leave_company(ctx: &ReducerContext) -> Result<(), String> {
         .find(ctx.sender())
         .ok_or("Account not found")?;
 
-    account
-        .company_id
+    let company_id = account
+        .active_company_id
         .ok_or("You do not belong to a company")?;
 
-    if account.role == UserRole::Owner {
+    let membership = find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("You are not a member of this company")?;
+
+    if membership.role == UserRole::Owner {
         return Err("Transfer ownership before leaving the company".to_string());
     }
 
+    // Delete membership
+    ctx.db.company_member().id().delete(membership.id);
+
+    // Switch active company to next available, or None
+    reassign_active_company(ctx, ctx.sender(), company_id);
+
+    Ok(())
+}
+
+/// Switch the user's active company context. The user must have a membership
+/// in the target company.
+///
+/// # Errors
+///
+/// Returns an error if the caller has no account or is not a member of the
+/// target company.
+#[spacetimedb::reducer]
+pub fn switch_active_company(ctx: &ReducerContext, company_id: u64) -> Result<(), String> {
+    let account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Account not found")?;
+
+    ctx.db
+        .company()
+        .id()
+        .find(company_id)
+        .ok_or("Company not found")?;
+
+    find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("You are not a member of this company")?;
+
     ctx.db.user_account().identity().update(UserAccount {
-        company_id: None,
-        role: UserRole::Member,
+        active_company_id: Some(company_id),
         ..account
     });
 
@@ -831,15 +1211,17 @@ pub fn update_capabilities(
 // Phase 4 — Role Management
 // ---------------------------------------------------------------------------
 
-/// Owner changes a team member's role. Only the Owner can change roles.
+/// Admin or Owner changes a team member's role in their company.
 /// Cannot change your own role or promote someone to Owner (use
-/// `transfer_ownership` for that).
+/// `transfer_ownership` for that). Admins can only assign roles below
+/// their own level; Owners can assign any non-Owner role.
 ///
 /// # Errors
 ///
 /// Returns an error if the caller targets themselves, tries to assign Owner,
-/// is not the Owner, the target is not found or not in the same company,
-/// or the target is already an Owner.
+/// is below Admin, the target has no membership in the same company,
+/// the target has an equal or higher role, or the caller tries to assign
+/// a role at or above their own level.
 #[spacetimedb::reducer]
 pub fn update_user_role(
     ctx: &ReducerContext,
@@ -854,26 +1236,29 @@ pub fn update_user_role(
         return Err("Use transfer_ownership to assign the Owner role".to_string());
     }
 
-    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Owner)?;
+    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
 
-    let target = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(target_identity)
-        .ok_or("Target user not found")?;
+    let caller_membership = find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("Not permitted")?;
 
-    if target.company_id != Some(company_id) {
-        return Err("Target is not in your company".to_string());
+    let target_membership = find_membership(ctx, target_identity, company_id)
+        .ok_or("Target is not in your company")?;
+
+    // Cannot change role of someone at or above your level
+    if role_level(target_membership.role) >= role_level(caller_membership.role) {
+        return Err("Cannot change the role of someone at or above your level".to_string());
     }
 
-    if target.role == UserRole::Owner {
-        return Err("Cannot change the role of another Owner".to_string());
+    // Cannot promote someone to or above your own level (unless Owner)
+    if caller_membership.role != UserRole::Owner
+        && role_level(new_role) >= role_level(caller_membership.role)
+    {
+        return Err("Cannot assign a role at or above your own level".to_string());
     }
 
-    ctx.db.user_account().identity().update(UserAccount {
+    ctx.db.company_member().id().update(CompanyMember {
         role: new_role,
-        ..target
+        ..target_membership
     });
 
     log::info!(
@@ -882,6 +1267,19 @@ pub fn update_user_role(
         company_id,
         id_short(target_identity),
         new_role
+    );
+
+    // Notify the target that their role was changed
+    let company_name = ctx.db.company().id().find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify(
+        ctx,
+        target_identity,
+        company_id,
+        NotificationType::RoleChanged,
+        "Role updated".to_string(),
+        format!("Your role in {} was changed to {:?}", company_name, new_role),
     );
 
     Ok(())
@@ -904,18 +1302,13 @@ pub fn transfer_ownership(
         return Err("You are already the owner".to_string());
     }
 
-    let (caller, company_id) = require_role_at_least(ctx, UserRole::Owner)?;
+    let (_caller, company_id) = require_role_at_least(ctx, UserRole::Owner)?;
 
-    let target = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(new_owner_identity)
-        .ok_or("Target user not found")?;
+    let caller_membership = find_membership(ctx, ctx.sender(), company_id)
+        .ok_or("Not permitted")?;
 
-    if target.company_id != Some(company_id) {
-        return Err("Target is not in your company".to_string());
-    }
+    let target_membership = find_membership(ctx, new_owner_identity, company_id)
+        .ok_or("Target is not in your company")?;
 
     // Update company owner reference — double-check caller is the recorded owner
     let company = ctx
@@ -934,16 +1327,16 @@ pub fn transfer_ownership(
         ..company
     });
 
-    // Demote current owner to Admin
-    ctx.db.user_account().identity().update(UserAccount {
+    // Demote current owner to Admin (on CompanyMember)
+    ctx.db.company_member().id().update(CompanyMember {
         role: UserRole::Admin,
-        ..caller
+        ..caller_membership
     });
 
-    // Promote target to Owner
-    ctx.db.user_account().identity().update(UserAccount {
+    // Promote target to Owner (on CompanyMember)
+    ctx.db.company_member().id().update(CompanyMember {
         role: UserRole::Owner,
-        ..target
+        ..target_membership
     });
 
     log::info!(
@@ -960,21 +1353,22 @@ pub fn transfer_ownership(
 // Phase 5 — Inter-Company Connections
 // ---------------------------------------------------------------------------
 
-/// Helper: determine which company the `requested_by` identity belongs to.
+/// Helper: determine which company the `requested_by` identity belongs to
+/// within this connection. Checks membership in both sides of the connection
+/// rather than relying on `active_company_id` (which may have changed since
+/// the request was made).
 ///
 /// # Errors
 ///
-/// Returns an error if the requesting user or their company cannot be found.
+/// Returns an error if the requesting user is not a member of either company.
 fn requesting_company_id(ctx: &ReducerContext, conn: &Connection) -> Result<u64, String> {
-    let account = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(conn.requested_by)
-        .ok_or("Requesting user not found")?;
-    account
-        .company_id
-        .ok_or_else(|| "Requesting user has no company".to_string())
+    if find_membership(ctx, conn.requested_by, conn.company_a).is_some() {
+        return Ok(conn.company_a);
+    }
+    if find_membership(ctx, conn.requested_by, conn.company_b).is_some() {
+        return Ok(conn.company_b);
+    }
+    Err("Requesting user is not a member of either connected company".to_string())
 }
 
 /// Request a connection with another company. If the target has blocked us
@@ -1032,6 +1426,20 @@ pub fn request_connection(
         created_at: ctx.timestamp,
     });
 
+    // Notify target company admins/owners of the incoming request
+    let my_company_name = ctx.db.company().id().find(my_company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify_company_role(
+        ctx,
+        target_company_id,
+        UserRole::Admin,
+        None,
+        NotificationType::ConnectionRequest,
+        "Connection request".to_string(),
+        format!("{} wants to connect", my_company_name),
+    );
+
     Ok(())
 }
 
@@ -1085,7 +1493,9 @@ pub fn accept_connection(
         return Err("Connection is not pending".to_string());
     }
 
-    if requesting_company_id(ctx, &conn)? == my_company_id {
+    let requesting_cid = requesting_company_id(ctx, &conn)?;
+
+    if requesting_cid == my_company_id {
         return Err("You cannot accept your own connection request".to_string());
     }
 
@@ -1093,6 +1503,20 @@ pub fn accept_connection(
         status: ConnectionStatus::Accepted,
         ..conn
     });
+
+    // Notify the requesting company that their request was accepted
+    let my_company_name = ctx.db.company().id().find(my_company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify_company_role(
+        ctx,
+        requesting_cid,
+        UserRole::Admin,
+        None,
+        NotificationType::ConnectionAccepted,
+        "Connection accepted".to_string(),
+        format!("{} accepted your connection request", my_company_name),
+    );
 
     Ok(())
 }
@@ -1121,6 +1545,21 @@ pub fn decline_connection(
     if requesting_company_id(ctx, &conn)? == my_company_id {
         return Err("You cannot decline your own connection request".to_string());
     }
+
+    // Notify the requesting company that their request was declined
+    let requesting_cid = requesting_company_id(ctx, &conn)?;
+    let my_company_name = ctx.db.company().id().find(my_company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default();
+    notify_company_role(
+        ctx,
+        requesting_cid,
+        UserRole::Admin,
+        None,
+        NotificationType::ConnectionDeclined,
+        "Connection declined".to_string(),
+        format!("{} declined your connection request", my_company_name),
+    );
 
     delete_connection_chat(ctx, conn.id);
     ctx.db.company_connection().id().delete(conn.id);
@@ -1293,22 +1732,17 @@ pub fn delete_company(ctx: &ReducerContext) -> Result<(), String> {
         ctx.db.invite_code().code().delete(&code);
     }
 
-    // 2. Unlink all members (set company_id = None, role = Member)
-    let member_ids: Vec<Identity> = ctx
+    // 2. Delete all memberships and reassign active companies
+    let members: Vec<(u64, Identity)> = ctx
         .db
-        .user_account()
-        .iter()
-        .filter(|a| a.company_id == Some(company_id))
-        .map(|a| a.identity)
+        .company_member()
+        .member_by_company()
+        .filter(&company_id)
+        .map(|m| (m.id, m.identity))
         .collect();
-    for member_id in &member_ids {
-        if let Some(account) = ctx.db.user_account().identity().find(*member_id) {
-            ctx.db.user_account().identity().update(UserAccount {
-                company_id: None,
-                role: UserRole::Member,
-                ..account
-            });
-        }
+    for (member_id, member_identity) in &members {
+        ctx.db.company_member().id().delete(*member_id);
+        reassign_active_company(ctx, *member_identity, company_id);
     }
 
     // 3. Delete capability row
@@ -1334,7 +1768,69 @@ pub fn delete_company(ctx: &ReducerContext) -> Result<(), String> {
         ctx.db.company_connection().id().delete(*conn_id);
     }
 
-    // 5. Delete the company row
+    // 5. Delete all notifications for this company
+    let notif_ids: Vec<u64> = ctx
+        .db
+        .notification()
+        .iter()
+        .filter(|n| n.company_id == company_id)
+        .map(|n| n.id)
+        .collect();
+    for notif_id in notif_ids {
+        ctx.db.notification().id().delete(notif_id);
+    }
+
+    // 6. Cascade-delete projects owned by this company
+    let owned_project_ids: Vec<u64> = ctx
+        .db
+        .project()
+        .iter()
+        .filter(|p| p.owner_company_id == company_id)
+        .map(|p| p.id)
+        .collect();
+    for pid in owned_project_ids {
+        delete_project_cascade(ctx, pid);
+    }
+
+    // 7. Remove this company from projects it was a member of (not owner)
+    //    Collect affected project IDs before deleting memberships, so we can
+    //    check for orphaned projects afterward (scoped, not full table scan).
+    let affected_project_ids: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_company()
+        .filter(&company_id)
+        .map(|m| m.project_id)
+        .collect();
+    let pm_ids: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_company()
+        .filter(&company_id)
+        .map(|m| m.id)
+        .collect();
+    for pm_id in pm_ids {
+        ctx.db.project_member().id().delete(pm_id);
+    }
+
+    // 8. Auto-delete any affected projects left with 0 Accepted members
+    for pid in affected_project_ids {
+        // Project may have already been cascade-deleted in step 6
+        if ctx.db.project().id().find(pid).is_none() {
+            continue;
+        }
+        let has_accepted = ctx
+            .db
+            .project_member()
+            .pm_by_project()
+            .filter(&pid)
+            .any(|m| m.status == ProjectMemberStatus::Accepted);
+        if !has_accepted {
+            delete_project_cascade(ctx, pid);
+        }
+    }
+
+    // 9. Delete the company row
     ctx.db.company().id().delete(company_id);
 
     log::info!(
@@ -1342,7 +1838,7 @@ pub fn delete_company(ctx: &ReducerContext) -> Result<(), String> {
         id_short(ctx.sender()),
         company_id,
         company.name,
-        member_ids.len()
+        members.len()
     );
 
     Ok(())
@@ -1373,16 +1869,8 @@ pub fn send_connection_chat(
     }
     validate_length(&text, "Message", MAX_MESSAGE)?;
 
-    let account = ctx
-        .db
-        .user_account()
-        .identity()
-        .find(ctx.sender())
-        .ok_or("Account not found")?;
-
-    let my_company_id = account
-        .company_id
-        .ok_or("You must belong to a company first")?;
+    // Pending users cannot chat — they must be activated first
+    let (_account, my_company_id) = require_role_at_least(ctx, UserRole::Field)?;
 
     let conn = ctx
         .db
@@ -1403,9 +1891,677 @@ pub fn send_connection_chat(
         id: 0,
         connection_id,
         sender: ctx.sender(),
-        text,
+        text: text.clone(),
         created_at: ctx.timestamp,
     });
+
+    // Notify the other company about the new message
+    let other_company_id = if conn.company_a == my_company_id {
+        conn.company_b
+    } else {
+        conn.company_a
+    };
+    let sender_name = _account.nickname.clone();
+    let preview = truncate_preview(&text, 50);
+    notify_company_role(
+        ctx,
+        other_company_id,
+        UserRole::Field,
+        None,
+        NotificationType::ChatMessage,
+        "New message".to_string(),
+        format!("{}: {}", sender_name, preview),
+    );
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — Notifications
+// ---------------------------------------------------------------------------
+
+/// Mark a single notification as read.
+#[spacetimedb::reducer]
+pub fn mark_notification_read(ctx: &ReducerContext, notification_id: u64) -> Result<(), String> {
+    let notif = ctx
+        .db
+        .notification()
+        .id()
+        .find(notification_id)
+        .ok_or("Notification not found")?;
+
+    if notif.recipient_identity != ctx.sender() {
+        return Err("Not your notification".to_string());
+    }
+
+    ctx.db.notification().id().update(Notification {
+        is_read: true,
+        ..notif
+    });
+
+    Ok(())
+}
+
+/// Mark all unread notifications as read for the caller within a specific company.
+#[spacetimedb::reducer]
+pub fn mark_all_notifications_read(ctx: &ReducerContext, company_id: u64) -> Result<(), String> {
+    let _account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Account not found")?;
+
+    let to_update: Vec<Notification> = ctx
+        .db
+        .notification()
+        .notif_by_recipient()
+        .filter(&ctx.sender())
+        .filter(|n| n.company_id == company_id && !n.is_read)
+        .collect();
+
+    for notif in to_update {
+        ctx.db.notification().id().update(Notification {
+            is_read: true,
+            ..notif
+        });
+    }
+
+    Ok(())
+}
+
+/// Delete all read notifications for the caller within a specific company.
+#[spacetimedb::reducer]
+pub fn clear_notifications(ctx: &ReducerContext, company_id: u64) -> Result<(), String> {
+    let _account = ctx
+        .db
+        .user_account()
+        .identity()
+        .find(ctx.sender())
+        .ok_or("Account not found")?;
+
+    let to_delete: Vec<u64> = ctx
+        .db
+        .notification()
+        .notif_by_recipient()
+        .filter(&ctx.sender())
+        .filter(|n| n.company_id == company_id && n.is_read)
+        .map(|n| n.id)
+        .collect();
+
+    for id in to_delete {
+        ctx.db.notification().id().delete(id);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8 — Projects (Multi-Company Rooms)
+// ---------------------------------------------------------------------------
+
+/// Create a new project room. The caller's active company becomes the owner
+/// and is automatically added as an Accepted member.
+#[spacetimedb::reducer]
+pub fn create_project(
+    ctx: &ReducerContext,
+    name: String,
+    description: String,
+) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let name = name.trim().to_string();
+    let description = description.trim().to_string();
+    validate_not_empty(&name, "Project name")?;
+    validate_length(&name, "Project name", MAX_PROJECT_NAME)?;
+    validate_length(&description, "Description", MAX_PROJECT_DESCRIPTION)?;
+
+    let project = ctx.db.project().insert(Project {
+        id: 0,
+        owner_company_id: company_id,
+        name: name.clone(),
+        description,
+        created_by: ctx.sender(),
+        created_at: ctx.timestamp,
+    });
+
+    // Auto-add creator's company as Accepted member
+    ctx.db.project_member().insert(ProjectMember {
+        id: 0,
+        project_id: project.id,
+        company_id,
+        status: ProjectMemberStatus::Accepted,
+        invited_by: ctx.sender(),
+        joined_at: ctx.timestamp,
+    });
+
+    log::info!(
+        "AUDIT: User {} created Project {} '{}' (owner company {})",
+        id_short(ctx.sender()),
+        project.id,
+        name,
+        company_id
+    );
+
+    Ok(())
+}
+
+/// Invite another company to a project. Only admins+ of the project owner
+/// company can invite. Cleans up old Left/Kicked rows before inserting.
+#[spacetimedb::reducer]
+pub fn invite_to_project(
+    ctx: &ReducerContext,
+    project_id: u64,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    if project.owner_company_id != company_id {
+        return Err("Only the owner company can invite".to_string());
+    }
+
+    // Target company must exist
+    let _target = ctx
+        .db
+        .company()
+        .id()
+        .find(target_company_id)
+        .ok_or("Target company not found")?;
+
+    if target_company_id == company_id {
+        return Err("Cannot invite your own company".to_string());
+    }
+
+    // Require an accepted connection between the two companies
+    let conn = find_connection(ctx, company_id, target_company_id);
+    match conn {
+        Some(c) if c.status == ConnectionStatus::Accepted => { /* ok */ }
+        _ => return Err("You must have an accepted connection with this company first".to_string()),
+    }
+
+    // Check for existing membership
+    let existing: Option<ProjectMember> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .find(|m| m.company_id == target_company_id);
+
+    if let Some(existing_member) = existing {
+        match existing_member.status {
+            ProjectMemberStatus::Accepted => {
+                return Err("Company is already a member of this project".to_string());
+            }
+            ProjectMemberStatus::Invited => {
+                return Err("Company has already been invited".to_string());
+            }
+            ProjectMemberStatus::Left | ProjectMemberStatus::Kicked => {
+                // Clean up old row so we can re-invite
+                ctx.db.project_member().id().delete(existing_member.id);
+            }
+        }
+    }
+
+    ctx.db.project_member().insert(ProjectMember {
+        id: 0,
+        project_id,
+        company_id: target_company_id,
+        status: ProjectMemberStatus::Invited,
+        invited_by: ctx.sender(),
+        joined_at: ctx.timestamp,
+    });
+
+    // Notify target company admins
+    notify_company_role(
+        ctx,
+        target_company_id,
+        UserRole::Admin,
+        None,
+        NotificationType::ProjectInvite,
+        format!("Project invitation: {}", project.name),
+        format!(
+            "Your company has been invited to join project '{}'",
+            project.name
+        ),
+    );
+
+    log::info!(
+        "AUDIT: User {} invited Company {} to Project {} '{}'",
+        id_short(ctx.sender()),
+        target_company_id,
+        project_id,
+        project.name
+    );
+
+    Ok(())
+}
+
+/// Accept a pending project invitation. Caller must be admin+ of the invited company.
+#[spacetimedb::reducer]
+pub fn accept_project_invite(ctx: &ReducerContext, project_id: u64) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    let membership = find_project_membership(ctx, project_id, company_id, ProjectMemberStatus::Invited)
+        .ok_or("No pending invitation found")?;
+
+    ctx.db.project_member().id().update(ProjectMember {
+        status: ProjectMemberStatus::Accepted,
+        joined_at: ctx.timestamp,
+        ..membership
+    });
+
+    let company_name = ctx
+        .db
+        .company()
+        .id()
+        .find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Notify all other Accepted companies' admins
+    let other_accepted: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .filter(|m| m.status == ProjectMemberStatus::Accepted && m.company_id != company_id)
+        .map(|m| m.company_id)
+        .collect();
+
+    for cid in other_accepted {
+        notify_company_role(
+            ctx,
+            cid,
+            UserRole::Admin,
+            None,
+            NotificationType::ProjectAccepted,
+            format!("{} joined project", company_name),
+            format!(
+                "{} accepted the invitation to project '{}'",
+                company_name, project.name
+            ),
+        );
+    }
+
+    log::info!(
+        "AUDIT: Company {} accepted invite to Project {} '{}'",
+        company_id,
+        project_id,
+        project.name
+    );
+
+    Ok(())
+}
+
+/// Decline a pending project invitation. Deletes the Invited row.
+#[spacetimedb::reducer]
+pub fn decline_project_invite(ctx: &ReducerContext, project_id: u64) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    let membership = find_project_membership(ctx, project_id, company_id, ProjectMemberStatus::Invited)
+        .ok_or("No pending invitation found")?;
+
+    ctx.db.project_member().id().delete(membership.id);
+
+    let company_name = ctx
+        .db
+        .company()
+        .id()
+        .find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Notify owner company admins
+    notify_company_role(
+        ctx,
+        project.owner_company_id,
+        UserRole::Admin,
+        None,
+        NotificationType::ProjectDeclined,
+        format!("{} declined project invite", company_name),
+        format!(
+            "{} declined the invitation to project '{}'",
+            company_name, project.name
+        ),
+    );
+
+    log::info!(
+        "AUDIT: Company {} declined invite to Project {} '{}'",
+        company_id,
+        project_id,
+        project.name
+    );
+
+    Ok(())
+}
+
+/// Send a chat message in a project room. Caller must be Field+ in an Accepted
+/// member company. Fan-out notifications to all other Accepted companies.
+#[spacetimedb::reducer]
+pub fn send_project_chat(
+    ctx: &ReducerContext,
+    project_id: u64,
+    text: String,
+) -> Result<(), String> {
+    let (account, company_id) = require_role_at_least(ctx, UserRole::Field)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    // Caller's company must be an Accepted member
+    find_project_membership(ctx, project_id, company_id, ProjectMemberStatus::Accepted)
+        .ok_or("Your company is not a member of this project")?;
+
+    let text = text.trim().to_string();
+    validate_not_empty(&text, "Message")?;
+    validate_length(&text, "Message", MAX_MESSAGE)?;
+
+    ctx.db.project_chat().insert(ProjectChat {
+        id: 0,
+        project_id,
+        sender: ctx.sender(),
+        text: text.clone(),
+        created_at: ctx.timestamp,
+    });
+
+    let sender_name = account.nickname.clone();
+    let company_name = ctx
+        .db
+        .company()
+        .id()
+        .find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+    let preview = truncate_preview(&text, 80);
+
+    // Notify all other Accepted companies (Field+)
+    let other_accepted: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .filter(|m| m.status == ProjectMemberStatus::Accepted && m.company_id != company_id)
+        .map(|m| m.company_id)
+        .collect();
+
+    for cid in other_accepted {
+        notify_company_role(
+            ctx,
+            cid,
+            UserRole::Field,
+            None,
+            NotificationType::ProjectChat,
+            format!("{} — {}", project.name, company_name),
+            format!("[{}] {}: {}", company_name, sender_name, preview),
+        );
+    }
+
+    log::info!(
+        "AUDIT: User {} sent chat in Project {} (company {})",
+        id_short(ctx.sender()),
+        project_id,
+        company_id
+    );
+
+    Ok(())
+}
+
+/// Leave a project. The owner company cannot leave (must delete the project).
+/// If no Accepted members remain after leaving, the project is auto-deleted.
+#[spacetimedb::reducer]
+pub fn leave_project(ctx: &ReducerContext, project_id: u64) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    if project.owner_company_id == company_id {
+        return Err("Owner company cannot leave. Delete the project instead.".to_string());
+    }
+
+    let membership = find_project_membership(ctx, project_id, company_id, ProjectMemberStatus::Accepted)
+        .ok_or("Your company is not a member of this project")?;
+
+    ctx.db.project_member().id().update(ProjectMember {
+        status: ProjectMemberStatus::Left,
+        ..membership
+    });
+
+    let company_name = ctx
+        .db
+        .company()
+        .id()
+        .find(company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Notify other Accepted companies' admins
+    let other_accepted: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .filter(|m| m.status == ProjectMemberStatus::Accepted && m.company_id != company_id)
+        .map(|m| m.company_id)
+        .collect();
+
+    for cid in &other_accepted {
+        notify_company_role(
+            ctx,
+            *cid,
+            UserRole::Admin,
+            None,
+            NotificationType::ProjectLeft,
+            format!("{} left project", company_name),
+            format!(
+                "{} left project '{}'",
+                company_name, project.name
+            ),
+        );
+    }
+
+    log::info!(
+        "AUDIT: User {} (Company {}) left Project {} '{}'",
+        id_short(ctx.sender()),
+        company_id,
+        project_id,
+        project.name
+    );
+
+    // If no Accepted members remain at all, auto-delete the project
+    let remaining_accepted = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .any(|m| m.status == ProjectMemberStatus::Accepted);
+    if !remaining_accepted {
+        delete_project_cascade(ctx, project_id);
+        log::info!(
+            "AUDIT: Project {} '{}' auto-deleted (no accepted members remain)",
+            project_id,
+            project.name
+        );
+    }
+
+    Ok(())
+}
+
+/// Kick a company from a project. Only the owner company's admins can kick.
+#[spacetimedb::reducer]
+pub fn kick_from_project(
+    ctx: &ReducerContext,
+    project_id: u64,
+    target_company_id: u64,
+) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    if project.owner_company_id != company_id {
+        return Err("Only the owner company can kick members".to_string());
+    }
+
+    if target_company_id == company_id {
+        return Err("Cannot kick your own company".to_string());
+    }
+
+    let membership = find_project_membership(ctx, project_id, target_company_id, ProjectMemberStatus::Accepted)
+        .ok_or("Target company is not an active member")?;
+
+    ctx.db.project_member().id().update(ProjectMember {
+        status: ProjectMemberStatus::Kicked,
+        ..membership
+    });
+
+    let target_name = ctx
+        .db
+        .company()
+        .id()
+        .find(target_company_id)
+        .map(|c| c.name.clone())
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // Notify kicked company's admins
+    notify_company_role(
+        ctx,
+        target_company_id,
+        UserRole::Admin,
+        None,
+        NotificationType::ProjectKicked,
+        format!("Removed from project '{}'", project.name),
+        format!(
+            "Your company has been removed from project '{}'",
+            project.name
+        ),
+    );
+
+    // Notify other remaining Accepted companies' admins
+    let other_accepted: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .filter(|m| {
+            m.status == ProjectMemberStatus::Accepted
+                && m.company_id != company_id
+                && m.company_id != target_company_id
+        })
+        .map(|m| m.company_id)
+        .collect();
+
+    for cid in other_accepted {
+        notify_company_role(
+            ctx,
+            cid,
+            UserRole::Admin,
+            None,
+            NotificationType::ProjectKicked,
+            format!("{} removed from project", target_name),
+            format!(
+                "{} was removed from project '{}'",
+                target_name, project.name
+            ),
+        );
+    }
+
+    log::info!(
+        "AUDIT: User {} kicked Company {} from Project {} '{}'",
+        id_short(ctx.sender()),
+        target_company_id,
+        project_id,
+        project.name
+    );
+
+    Ok(())
+}
+
+/// Delete a project entirely. Only the owner company's admins can delete.
+/// Cascade-deletes all members and chat messages.
+#[spacetimedb::reducer]
+pub fn delete_project(ctx: &ReducerContext, project_id: u64) -> Result<(), String> {
+    let (_account, company_id) = require_role_at_least(ctx, UserRole::Admin)?;
+
+    let project = ctx
+        .db
+        .project()
+        .id()
+        .find(project_id)
+        .ok_or("Project not found")?;
+
+    if project.owner_company_id != company_id {
+        return Err("Only the owner company can delete the project".to_string());
+    }
+
+    let project_name = project.name.clone();
+
+    // Notify all other Accepted members before deleting
+    let other_accepted: Vec<u64> = ctx
+        .db
+        .project_member()
+        .pm_by_project()
+        .filter(&project_id)
+        .filter(|m| m.status == ProjectMemberStatus::Accepted && m.company_id != company_id)
+        .map(|m| m.company_id)
+        .collect();
+
+    for cid in other_accepted {
+        notify_company_role(
+            ctx,
+            cid,
+            UserRole::Admin,
+            None,
+            NotificationType::ProjectLeft,
+            format!("Project '{}' deleted", project_name),
+            format!(
+                "Project '{}' has been deleted by the owner",
+                project_name
+            ),
+        );
+    }
+
+    delete_project_cascade(ctx, project_id);
+
+    log::info!(
+        "AUDIT: User {} deleted Project {} '{}'",
+        id_short(ctx.sender()),
+        project_id,
+        project_name
+    );
 
     Ok(())
 }

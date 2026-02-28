@@ -31,6 +31,17 @@ export const Company = __t.object("Company", {
 });
 export type Company = __Infer<typeof Company>;
 
+export const CompanyMember = __t.object("CompanyMember", {
+  id: __t.u64(),
+  identity: __t.identity(),
+  companyId: __t.u64(),
+  get role() {
+    return UserRole;
+  },
+  joinedAt: __t.timestamp(),
+});
+export type CompanyMember = __Infer<typeof CompanyMember>;
+
 export const Connection = __t.object("Connection", {
   id: __t.u64(),
   companyA: __t.u64(),
@@ -70,21 +81,98 @@ export const InviteCode = __t.object("InviteCode", {
 });
 export type InviteCode = __Infer<typeof InviteCode>;
 
+export const Notification = __t.object("Notification", {
+  id: __t.u64(),
+  recipientIdentity: __t.identity(),
+  companyId: __t.u64(),
+  get notificationType() {
+    return NotificationType;
+  },
+  title: __t.string(),
+  body: __t.string(),
+  isRead: __t.bool(),
+  createdAt: __t.timestamp(),
+});
+export type Notification = __Infer<typeof Notification>;
+
+// The tagged union or sum type for the algebraic type `NotificationType`.
+export const NotificationType = __t.enum("NotificationType", {
+  MemberJoined: __t.unit(),
+  ConnectionRequest: __t.unit(),
+  ConnectionAccepted: __t.unit(),
+  ConnectionDeclined: __t.unit(),
+  ChatMessage: __t.unit(),
+  RoleChanged: __t.unit(),
+  MemberRemoved: __t.unit(),
+  ProjectInvite: __t.unit(),
+  ProjectAccepted: __t.unit(),
+  ProjectDeclined: __t.unit(),
+  ProjectChat: __t.unit(),
+  ProjectKicked: __t.unit(),
+  ProjectLeft: __t.unit(),
+});
+export type NotificationType = __Infer<typeof NotificationType>;
+
 export const OnlineUser = __t.object("OnlineUser", {
   identity: __t.identity(),
   online: __t.bool(),
 });
 export type OnlineUser = __Infer<typeof OnlineUser>;
 
+export const Project = __t.object("Project", {
+  id: __t.u64(),
+  ownerCompanyId: __t.u64(),
+  name: __t.string(),
+  description: __t.string(),
+  createdBy: __t.identity(),
+  createdAt: __t.timestamp(),
+});
+export type Project = __Infer<typeof Project>;
+
+export const ProjectChat = __t.object("ProjectChat", {
+  id: __t.u64(),
+  projectId: __t.u64(),
+  sender: __t.identity(),
+  text: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type ProjectChat = __Infer<typeof ProjectChat>;
+
+export const ProjectMember = __t.object("ProjectMember", {
+  id: __t.u64(),
+  projectId: __t.u64(),
+  companyId: __t.u64(),
+  get status() {
+    return ProjectMemberStatus;
+  },
+  invitedBy: __t.identity(),
+  joinedAt: __t.timestamp(),
+});
+export type ProjectMember = __Infer<typeof ProjectMember>;
+
+// The tagged union or sum type for the algebraic type `ProjectMemberStatus`.
+export const ProjectMemberStatus = __t.enum("ProjectMemberStatus", {
+  Invited: __t.unit(),
+  Accepted: __t.unit(),
+  Left: __t.unit(),
+  Kicked: __t.unit(),
+});
+export type ProjectMemberStatus = __Infer<typeof ProjectMemberStatus>;
+
+export const UsedInviteCode = __t.object("UsedInviteCode", {
+  id: __t.u64(),
+  identity: __t.identity(),
+  code: __t.string(),
+  companyId: __t.u64(),
+});
+export type UsedInviteCode = __Infer<typeof UsedInviteCode>;
+
 export const UserAccount = __t.object("UserAccount", {
   identity: __t.identity(),
   fullName: __t.string(),
   nickname: __t.string(),
   email: __t.string(),
-  companyId: __t.option(__t.u64()),
-  get role() {
-    return UserRole;
-  },
+  activeCompanyId: __t.option(__t.u64()),
   createdAt: __t.timestamp(),
 });
 export type UserAccount = __Infer<typeof UserAccount>;
@@ -94,7 +182,9 @@ export const UserRole = __t.enum("UserRole", {
   Owner: __t.unit(),
   Admin: __t.unit(),
   Member: __t.unit(),
+  Installer: __t.unit(),
   Field: __t.unit(),
+  Pending: __t.unit(),
 });
 export type UserRole = __Infer<typeof UserRole>;
 

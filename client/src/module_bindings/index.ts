@@ -35,21 +35,33 @@ import {
 
 // Import all reducer arg schemas
 import AcceptConnectionReducer from "./accept_connection_reducer";
+import AcceptProjectInviteReducer from "./accept_project_invite_reducer";
 import AddColleagueByIdentityReducer from "./add_colleague_by_identity_reducer";
 import BlockCompanyReducer from "./block_company_reducer";
 import CancelRequestReducer from "./cancel_request_reducer";
+import ClearNotificationsReducer from "./clear_notifications_reducer";
 import CreateAccountReducer from "./create_account_reducer";
 import CreateCompanyReducer from "./create_company_reducer";
+import CreateProjectReducer from "./create_project_reducer";
 import DeclineConnectionReducer from "./decline_connection_reducer";
+import DeclineProjectInviteReducer from "./decline_project_invite_reducer";
 import DeleteCompanyReducer from "./delete_company_reducer";
 import DeleteInviteCodeReducer from "./delete_invite_code_reducer";
+import DeleteProjectReducer from "./delete_project_reducer";
 import DisconnectCompanyReducer from "./disconnect_company_reducer";
 import GenerateInviteCodeReducer from "./generate_invite_code_reducer";
+import InviteToProjectReducer from "./invite_to_project_reducer";
 import JoinCompanyReducer from "./join_company_reducer";
+import KickFromProjectReducer from "./kick_from_project_reducer";
 import LeaveCompanyReducer from "./leave_company_reducer";
+import LeaveProjectReducer from "./leave_project_reducer";
+import MarkAllNotificationsReadReducer from "./mark_all_notifications_read_reducer";
+import MarkNotificationReadReducer from "./mark_notification_read_reducer";
 import RemoveColleagueReducer from "./remove_colleague_reducer";
 import RequestConnectionReducer from "./request_connection_reducer";
 import SendConnectionChatReducer from "./send_connection_chat_reducer";
+import SendProjectChatReducer from "./send_project_chat_reducer";
+import SwitchActiveCompanyReducer from "./switch_active_company_reducer";
 import TransferOwnershipReducer from "./transfer_ownership_reducer";
 import UnblockCompanyReducer from "./unblock_company_reducer";
 import UpdateCapabilitiesReducer from "./update_capabilities_reducer";
@@ -63,9 +75,14 @@ import UpdateUserRoleReducer from "./update_user_role_reducer";
 import CapabilityRow from "./capability_table";
 import CompanyRow from "./company_table";
 import CompanyConnectionRow from "./company_connection_table";
+import CompanyMemberRow from "./company_member_table";
 import ConnectionChatRow from "./connection_chat_table";
 import InviteCodeRow from "./invite_code_table";
+import NotificationRow from "./notification_table";
 import OnlineUserRow from "./online_user_table";
+import ProjectRow from "./project_table";
+import ProjectChatRow from "./project_chat_table";
+import ProjectMemberRow from "./project_member_table";
 import UserAccountRow from "./user_account_table";
 
 /** Type-only namespace exports for generated type groups. */
@@ -115,6 +132,23 @@ const tablesSchema = __schema({
       { name: 'company_connection_id_key', constraint: 'unique', columns: ['id'] },
     ],
   }, CompanyConnectionRow),
+  company_member: __table({
+    name: 'company_member',
+    indexes: [
+      { name: 'member_by_company', algorithm: 'btree', columns: [
+        'companyId',
+      ] },
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'member_by_identity', algorithm: 'btree', columns: [
+        'identity',
+      ] },
+    ],
+    constraints: [
+      { name: 'company_member_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, CompanyMemberRow),
   connection_chat: __table({
     name: 'connection_chat',
     indexes: [
@@ -143,6 +177,20 @@ const tablesSchema = __schema({
       { name: 'invite_code_code_key', constraint: 'unique', columns: ['code'] },
     ],
   }, InviteCodeRow),
+  notification: __table({
+    name: 'notification',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'notif_by_recipient', algorithm: 'btree', columns: [
+        'recipientIdentity',
+      ] },
+    ],
+    constraints: [
+      { name: 'notification_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, NotificationRow),
   online_user: __table({
     name: 'online_user',
     indexes: [
@@ -154,12 +202,51 @@ const tablesSchema = __schema({
       { name: 'online_user_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, OnlineUserRow),
+  project: __table({
+    name: 'project',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ProjectRow),
+  project_chat: __table({
+    name: 'project_chat',
+    indexes: [
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'pchat_by_project', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_chat_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ProjectChatRow),
+  project_member: __table({
+    name: 'project_member',
+    indexes: [
+      { name: 'pm_by_company', algorithm: 'btree', columns: [
+        'companyId',
+      ] },
+      { name: 'id', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { name: 'pm_by_project', algorithm: 'btree', columns: [
+        'projectId',
+      ] },
+    ],
+    constraints: [
+      { name: 'project_member_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, ProjectMemberRow),
   user_account: __table({
     name: 'user_account',
     indexes: [
-      { name: 'account_by_company', algorithm: 'btree', columns: [
-        'companyId',
-      ] },
       { name: 'identity', algorithm: 'btree', columns: [
         'identity',
       ] },
@@ -173,21 +260,33 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("accept_connection", AcceptConnectionReducer),
+  __reducerSchema("accept_project_invite", AcceptProjectInviteReducer),
   __reducerSchema("add_colleague_by_identity", AddColleagueByIdentityReducer),
   __reducerSchema("block_company", BlockCompanyReducer),
   __reducerSchema("cancel_request", CancelRequestReducer),
+  __reducerSchema("clear_notifications", ClearNotificationsReducer),
   __reducerSchema("create_account", CreateAccountReducer),
   __reducerSchema("create_company", CreateCompanyReducer),
+  __reducerSchema("create_project", CreateProjectReducer),
   __reducerSchema("decline_connection", DeclineConnectionReducer),
+  __reducerSchema("decline_project_invite", DeclineProjectInviteReducer),
   __reducerSchema("delete_company", DeleteCompanyReducer),
   __reducerSchema("delete_invite_code", DeleteInviteCodeReducer),
+  __reducerSchema("delete_project", DeleteProjectReducer),
   __reducerSchema("disconnect_company", DisconnectCompanyReducer),
   __reducerSchema("generate_invite_code", GenerateInviteCodeReducer),
+  __reducerSchema("invite_to_project", InviteToProjectReducer),
   __reducerSchema("join_company", JoinCompanyReducer),
+  __reducerSchema("kick_from_project", KickFromProjectReducer),
   __reducerSchema("leave_company", LeaveCompanyReducer),
+  __reducerSchema("leave_project", LeaveProjectReducer),
+  __reducerSchema("mark_all_notifications_read", MarkAllNotificationsReadReducer),
+  __reducerSchema("mark_notification_read", MarkNotificationReadReducer),
   __reducerSchema("remove_colleague", RemoveColleagueReducer),
   __reducerSchema("request_connection", RequestConnectionReducer),
   __reducerSchema("send_connection_chat", SendConnectionChatReducer),
+  __reducerSchema("send_project_chat", SendProjectChatReducer),
+  __reducerSchema("switch_active_company", SwitchActiveCompanyReducer),
   __reducerSchema("transfer_ownership", TransferOwnershipReducer),
   __reducerSchema("unblock_company", UnblockCompanyReducer),
   __reducerSchema("update_capabilities", UpdateCapabilitiesReducer),
